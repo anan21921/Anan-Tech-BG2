@@ -57,13 +57,24 @@ export const Controls: React.FC<ControlsProps> = ({ settings, setSettings, disab
           <optgroup label="পুরুষদের জন্য (For Men)">
             <option value={DressType.FormalSuitBlack}>কালো ফরমাল স্যুট (Black Suit)</option>
             <option value={DressType.FormalSuitNavy}>নেভি ব্লু স্যুট (Navy Suit)</option>
+            <option value={DressType.FormalSuitGrey}>ধূসর ফরমাল স্যুট (Grey Suit)</option>
             <option value={DressType.WhiteShirt}>সাদা শার্ট (White Shirt)</option>
-            <option value={DressType.Panjabi}>পাঞ্জাবি (Panjabi)</option>
+            <option value={DressType.BlueShirt}>নীল শার্ট (Blue Shirt)</option>
+            <option value={DressType.CheckeredShirt}>চেক শার্ট (Checkered Shirt)</option>
+            <option value={DressType.PoloShirt}>নেভি ব্লু পোলো শার্ট (Polo Shirt)</option>
+            <option value={DressType.Panjabi}>সাদা পাঞ্জাবি (White Panjabi)</option>
+            <option value={DressType.BlackPanjabi}>কালো পাঞ্জাবি (Black Panjabi)</option>
+            <option value={DressType.Jubba}>জুব্বা (Jubba/Thobe)</option>
+            <option value={DressType.Sherwani}>শেরওয়ানি (Sherwani)</option>
           </optgroup>
           <optgroup label="মহিলাদের জন্য (For Women)">
             <option value={DressType.Saree}>শাড়ি (Saree)</option>
             <option value={DressType.SalwarKameez}>সালোয়ার কামিজ (Salwar Kameez)</option>
+            <option value={DressType.Hijab}>হিজাব (Hijab)</option>
+            <option value={DressType.Abaya}>বোরকা/আবায়া (Abaya)</option>
             <option value={DressType.WomenBlazer}>ফরমাল ব্লেজার (Women's Blazer)</option>
+            <option value={DressType.WomenWhiteShirt}>সাদা শার্ট (Women's White Shirt)</option>
+            <option value={DressType.Kurti}>কুর্তি (Kurti)</option>
           </optgroup>
         </select>
       </div>
