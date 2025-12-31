@@ -1,0 +1,7 @@
+{
+  "name": "BD Passport Photo AI",
+  "description": "Professional Bangladeshi Passport Photo Maker with AI editing capabilities.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
