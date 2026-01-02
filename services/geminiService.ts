@@ -3,84 +3,158 @@ import { PhotoSettings, DressType } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// Helper to convert blob to base64
+// Helper to convert blob to base64 Data URL (includes prefix)
 export const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
-      const base64String = reader.result as string;
-      // Remove data url prefix (e.g., "data:image/jpeg;base64,")
-      const base64Data = base64String.split(',')[1];
-      resolve(base64Data);
+      resolve(reader.result as string);
     };
     reader.onerror = reject;
     reader.readAsDataURL(blob);
   });
 };
 
+export interface FaceAnalysisResult {
+    rollAngle: number;
+    faceBox: { ymin: number; xmin: number; ymax: number; xmax: number } | null;
+}
+
+// Analyze image to get face bounding box and tilt angle
+export const getFaceAnalysis = async (imageInput: string): Promise<FaceAnalysisResult> => {
+    try {
+        const model = 'gemini-2.5-flash';
+        
+        let mimeType = 'image/jpeg';
+        let imageBase64 = imageInput;
+        if (imageInput.startsWith('data:')) {
+            const parts = imageInput.split(',');
+            if (parts.length === 2) {
+                 const mimeMatch = parts[0].match(/:(.*?);/);
+                 if (mimeMatch) mimeType = mimeMatch[1];
+                 imageBase64 = parts[1];
+            }
+        }
+
+        const prompt = `
+            Analyze this passport photo candidate.
+            1. Detect the main face box [ymin, xmin, ymax, xmax] (0-1000 scale).
+            2. Estimate head tilt roll angle in degrees to make eyes level.
+            Return JSON: { "rollAngle": number, "faceBox": [ymin, xmin, ymax, xmax] }
+        `;
+
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: {
+                parts: [
+                    { inlineData: { mimeType: mimeType, data: imageBase64 } },
+                    { text: prompt }
+                ]
+            },
+            config: {
+                responseMimeType: "application/json"
+            }
+        });
+
+        const text = response.text; 
+        if (!text) return { rollAngle: 0, faceBox: null };
+        
+        const data = JSON.parse(text);
+        return {
+            rollAngle: data.rollAngle || 0,
+            faceBox: data.faceBox ? {
+                ymin: data.faceBox[0],
+                xmin: data.faceBox[1],
+                ymax: data.faceBox[2],
+                xmax: data.faceBox[3]
+            } : null
+        };
+
+    } catch (e) {
+        console.error("Face analysis failed", e);
+        return { rollAngle: 0, faceBox: null };
+    }
+};
+
 export const generatePassportPhoto = async (
-  imageBase64: string,
+  imageInput: string,
   settings: PhotoSettings
 ): Promise<string> => {
-  try {
-    const model = 'gemini-2.5-flash-image';
-
-    let prompt = `
-      Task: Edit this photo to create a strictly professional passport-sized ID photo.
-      
-      Requirements:
-      1. Crop and frame: Center the head and shoulders perfectly for a passport photo (Aspect ratio 40mm width x 50mm height). The face should take up about 70-80% of the frame.
-      2. Background: Replace the entire background with a solid ${settings.bgColor} color. Ensure clean separation between hair/clothes and background.
-      3. Lighting: ${settings.enhanceLighting ? 'Correct the lighting to be even, professional studio lighting. Remove harsh shadows.' : 'Ensure lighting is balanced.'}
-      4. Face: ${settings.smoothFace ? 'Lightly smooth the skin and remove blemishes while keeping the person looking natural and recognizable. Do not alter facial structure.' : 'Keep the face natural.'}
-      5. Look: The subject should look straight at the camera.
-    `;
-
-    if (settings.dress !== DressType.None) {
-      prompt += `
-      6. Clothing: Change the person's outfit to a ${settings.dress}. Ensure the clothing fits naturally at the neck and shoulders.
-      `;
-    } else {
-      prompt += `
-      6. Clothing: Keep the original clothing but ensure it looks neat.
-      `;
+    // Determine mime type and base64 data
+    let mimeType = 'image/jpeg';
+    let imageBase64 = imageInput;
+    if (imageInput.startsWith('data:')) {
+        const parts = imageInput.split(',');
+        if (parts.length === 2) {
+            const mimeMatch = parts[0].match(/:(.*?);/);
+            if (mimeMatch) mimeType = mimeMatch[1];
+            imageBase64 = parts[1];
+        }
     }
 
-    prompt += `
-      Output: Return ONLY the processed image. High resolution.
+    let dressPrompt = "Keep original clothing.";
+    if (settings.dress !== DressType.None) {
+        const dressDesc = settings.dress === DressType.Custom ? settings.customDressDescription : settings.dress;
+        dressPrompt = `Change clothing to: ${dressDesc}. Ensure the clothing fits naturally and looks professional.`;
+    }
+
+    // New logic for face brightening with intensity
+    let faceBrighteningPrompt = "";
+    if (settings.brightenFace || settings.brightenFaceIntensity > 0) {
+        const intensity = settings.brightenFaceIntensity;
+        faceBrighteningPrompt = `Slightly brighten the face (${intensity}% intensity) to improve visibility, but keep it natural.`;
+    }
+
+    // Refined prompt to prevent text generation on image
+    const prompt = `
+        Transform this image into a professional passport photo.
+        
+        STRICT INSTRUCTIONS:
+        1. Background: Change background to a solid ${settings.bgColor} color.
+        2. Clothing: ${dressPrompt}
+        3. Face: ${settings.smoothFace ? "Apply subtle skin smoothing to reduce noise." : "Keep skin texture natural."}
+        4. Lighting: ${settings.enhanceLighting ? "Balance the lighting for a studio look." : "Keep original lighting."}
+        5. ${faceBrighteningPrompt}
+        
+        NEGATIVE CONSTRAINTS (CRITICAL):
+        - DO NOT add any text, code, overlay, numbers, or watermarks on the image.
+        - DO NOT change the person's identity or facial features.
+        - DO NOT distort the face.
+        - Output MUST be a clean photo only.
     `;
 
     const response = await ai.models.generateContent({
-      model: model,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType: 'image/jpeg',
-              data: imageBase64
+        model: 'gemini-2.5-flash-image',
+        contents: {
+            parts: [
+                { inlineData: { mimeType: mimeType, data: imageBase64 } },
+                { text: prompt }
+            ]
+        },
+        config: {
+            imageConfig: {
+                aspectRatio: "3:4" 
             }
-          },
-          {
-            text: prompt
-          }
-        ]
-      }
+        }
     });
 
-    // Check for image in response
+    // Check parts for the image
     const parts = response.candidates?.[0]?.content?.parts;
     if (parts) {
-      for (const part of parts) {
-        if (part.inlineData && part.inlineData.data) {
-          return part.inlineData.data;
+        for (const part of parts) {
+            if (part.inlineData && part.inlineData.data) {
+                return part.inlineData.data;
+            }
         }
-      }
     }
-
-    throw new Error("No image generated.");
-
-  } catch (error) {
-    console.error("Error generating passport photo:", error);
-    throw error;
-  }
+    
+    // If we get here, no image was generated.
+    if (response.text) {
+        console.warn("Gemini Refusal:", response.text);
+        let errorMsg = response.text;
+        if (errorMsg.length > 200) errorMsg = errorMsg.substring(0, 200) + "...";
+        throw new Error(errorMsg);
+    }
+    
+    throw new Error("No image generated. Please try a different photo or setting.");
 };
