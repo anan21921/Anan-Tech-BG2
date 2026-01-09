@@ -4,13 +4,16 @@ import react from '@vitejs/plugin-react'
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
-  // Fix: Cast process to any to avoid TS error about missing cwd property
+  // Load environment variables. 
+  // The third argument '' ensures we load all variables (including those without VITE_ prefix like API_KEY)
+  // Casting process to any helps avoid type issues in some environments.
   const env = loadEnv(mode, (process as any).cwd(), '');
+  
   return {
     plugins: [react()],
-    base: '/', // Changed from './' to '/' to ensure assets load correctly on Netlify
+    base: '/', 
     define: {
-      // This enables process.env.API_KEY to work in the browser
+      // This injects the API key from Netlify environment into the code where process.env.API_KEY is used
       'process.env.API_KEY': JSON.stringify(env.API_KEY)
     }
   }
