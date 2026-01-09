@@ -75,7 +75,7 @@ export interface User {
   balance: number;
 }
 
-// Payment Types
+// Payment & History Types
 export type RechargeStatus = 'pending' | 'approved' | 'rejected';
 
 export interface RechargeRequest {
@@ -88,4 +88,28 @@ export interface RechargeRequest {
     trxId: string;
     status: RechargeStatus;
     date: string;
+}
+
+export interface Transaction {
+    id: string;
+    userId: string;
+    amount: number;
+    type: 'credit' | 'debit'; // credit = add, debit = deduct
+    description: string;
+    date: string;
+}
+
+export interface GeneratedImage {
+    id: string;
+    userId: string;
+    userName: string;
+    imageBase64: string;
+    date: string;
+    settings: string; // concise summary of settings
+}
+
+// Chat Types
+export interface ChatMessage {
+    role: 'user' | 'model';
+    text: string;
 }

@@ -1,8 +1,10 @@
-import { User, RechargeRequest, RechargeStatus } from '../types';
+import { User, RechargeRequest, RechargeStatus, Transaction, GeneratedImage } from '../types';
 
 const STORAGE_KEY_USERS = 'anan_app_users';
 const STORAGE_KEY_CURRENT_USER = 'anan_auth_user';
 const STORAGE_KEY_REQUESTS = 'anan_app_recharge_requests';
+const STORAGE_KEY_TRANSACTIONS = 'anan_app_transactions';
+const STORAGE_KEY_IMAGES = 'anan_app_generated_images';
 
 // Helper for unique IDs
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
@@ -16,7 +18,7 @@ const DEFAULT_USERS: any[] = [
         name: 'Super Admin',
         role: 'admin',
         avatar: 'https://ui-avatars.com/api/?name=Super+Admin&background=0D8ABC&color=fff',
-        balance: 1000
+        balance: 0 
     },
     {
         id: '2',
@@ -25,7 +27,7 @@ const DEFAULT_USERS: any[] = [
         name: 'Regular User',
         role: 'user',
         avatar: 'https://ui-avatars.com/api/?name=Regular+User&background=6366f1&color=fff',
-        balance: 10
+        balance: 0 
     },
     {
         id: '3',
@@ -34,7 +36,7 @@ const DEFAULT_USERS: any[] = [
         name: 'Rupok',
         role: 'user',
         avatar: 'https://ui-avatars.com/api/?name=Rupok&background=10b981&color=fff',
-        balance: 100
+        balance: 0 
     }
 ];
 
@@ -55,6 +57,26 @@ const getStoredUsers = (): any[] => {
 const getStoredRequests = (): RechargeRequest[] => {
     try {
         const stored = localStorage.getItem(STORAGE_KEY_REQUESTS);
+        if (!stored) return [];
+        return JSON.parse(stored);
+    } catch (e) {
+        return [];
+    }
+};
+
+const getStoredTransactions = (): Transaction[] => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY_TRANSACTIONS);
+        if (!stored) return [];
+        return JSON.parse(stored);
+    } catch (e) {
+        return [];
+    }
+};
+
+const getStoredImages = (): GeneratedImage[] => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY_IMAGES);
         if (!stored) return [];
         return JSON.parse(stored);
     } catch (e) {
@@ -110,8 +132,10 @@ export const getFullDatabaseJSON = (): string => {
     const data = {
         users: getStoredUsers(),
         requests: getStoredRequests(),
+        transactions: getStoredTransactions(),
+        images: getStoredImages(),
         timestamp: new Date().toISOString(),
-        version: '1.0'
+        version: '1.2'
     };
     return JSON.stringify(data, null, 2);
 };
@@ -124,6 +148,12 @@ export const restoreDatabaseFromJSON = (jsonString: string): boolean => {
         }
         if (data.requests && Array.isArray(data.requests)) {
             localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(data.requests));
+        }
+        if (data.transactions && Array.isArray(data.transactions)) {
+            localStorage.setItem(STORAGE_KEY_TRANSACTIONS, JSON.stringify(data.transactions));
+        }
+        if (data.images && Array.isArray(data.images)) {
+            localStorage.setItem(STORAGE_KEY_IMAGES, JSON.stringify(data.images));
         }
         return true;
     } catch (e) {
@@ -139,7 +169,7 @@ export const getAllUsers = (): User[] => {
     return users.map(({ password, ...user }: any) => user);
 };
 
-export const createUser = async (userData: { username: string; password: string; name: string; role: 'user' | 'admin', balance: number }): Promise<boolean> => {
+export const createUser = async (userData: { username: string; password: string; name: string; role: 'user' | 'admin', balance?: number }): Promise<boolean> => {
     await new Promise(resolve => setTimeout(resolve, 500));
     const users = getStoredUsers();
     
@@ -150,28 +180,75 @@ export const createUser = async (userData: { username: string; password: string;
         throw new Error('এই ইউজারনেমটি ইতিমধ্যে ব্যবহার করা হয়েছে। অন্য ইউজারনেম দিন।');
     }
 
+    // Set default balance to 10 for new users (Welcome Bonus)
+    const initialBalance = userData.balance !== undefined ? userData.balance : 10;
+
     const newUser = {
         id: generateId(),
         ...userData,
         username: cleanUsername,
         password: userData.password.trim(),
-        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name)}&background=random&color=fff`
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.name)}&background=random&color=fff`,
+        balance: initialBalance
     };
 
     users.push(newUser);
     localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(users));
+
+    // Log the welcome bonus transaction if applicable
+    if (initialBalance > 0) {
+        logTransaction({
+            userId: newUser.id,
+            amount: initialBalance,
+            type: 'credit',
+            description: 'Welcome Bonus'
+        });
+    }
+
     return true;
 };
 
-export const updateBalance = async (userId: string, amount: number): Promise<User | null> => {
+// Helper to log transactions
+const logTransaction = (data: { userId: string, amount: number, type: 'credit' | 'debit', description: string }) => {
+    const transactions = getStoredTransactions();
+    const newTx: Transaction = {
+        id: generateId(),
+        userId: data.userId,
+        amount: Math.abs(data.amount),
+        type: data.type,
+        description: data.description,
+        date: new Date().toISOString()
+    };
+    transactions.unshift(newTx);
+    try {
+        localStorage.setItem(STORAGE_KEY_TRANSACTIONS, JSON.stringify(transactions));
+    } catch (e) {
+        // If storage full, remove old
+        if (transactions.length > 100) {
+            const trimmed = transactions.slice(0, 100);
+            localStorage.setItem(STORAGE_KEY_TRANSACTIONS, JSON.stringify(trimmed));
+        }
+    }
+};
+
+export const updateBalance = async (userId: string, amount: number, description: string = 'System Update'): Promise<User | null> => {
     const users = getStoredUsers();
     const userIndex = users.findIndex((u: any) => u.id === userId);
     
     if (userIndex > -1) {
         const currentBalance = Number(users[userIndex].balance) || 0;
-        users[userIndex].balance = currentBalance + Number(amount);
+        const newBalance = currentBalance + Number(amount);
         
+        users[userIndex].balance = newBalance;
         localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(users));
+        
+        // Log transaction
+        logTransaction({
+            userId: userId,
+            amount: amount,
+            type: amount >= 0 ? 'credit' : 'debit',
+            description: description
+        });
         
         const currentUser = getCurrentUser();
         if (currentUser && currentUser.id === userId) {
@@ -184,6 +261,11 @@ export const updateBalance = async (userId: string, amount: number): Promise<Use
         return safeUser;
     }
     return null;
+};
+
+export const getUserTransactions = (userId: string): Transaction[] => {
+    const transactions = getStoredTransactions();
+    return transactions.filter(t => t.userId === userId);
 };
 
 // --- Recharge Request Functions ---
@@ -205,7 +287,14 @@ export const createRechargeRequest = async (data: { userId: string, userName: st
     };
 
     requests.unshift(newRequest); 
-    localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(requests));
+    try {
+        localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(requests));
+    } catch (e) {
+        // If full, trim old requests
+         if (requests.length > 50) {
+            localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(requests.slice(0, 50)));
+        }
+    }
     return true;
 };
 
@@ -219,30 +308,66 @@ export const getUserRechargeRequests = (userId: string): RechargeRequest[] => {
 };
 
 export const handleRechargeRequest = async (requestId: string, status: 'approved' | 'rejected'): Promise<boolean> => {
-    // 1. Get latest requests
     const requests = getStoredRequests();
     const index = requests.findIndex(r => r.id === requestId);
     
     if (index > -1 && requests[index].status === 'pending') {
-        
-        // 2. If approving, FIRST try to update the balance
         if (status === 'approved') {
             const userId = requests[index].userId;
             const amount = requests[index].amount;
-            
-            // This function handles fetching users, updating, and saving users to storage
-            const updatedUser = await updateBalance(userId, amount);
-            
-            if (!updatedUser) {
-                console.error("User not found for balance update, cannot approve request.");
-                return false;
-            }
+            const updatedUser = await updateBalance(userId, amount, `Recharge Approved (Trx: ${requests[index].trxId})`);
+            if (!updatedUser) return false;
         }
-        
-        // 3. Only if balance updated (or if rejecting), update request status
         requests[index].status = status;
         localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(requests));
         return true;
     }
     return false;
+};
+
+// --- Image Gallery Functions ---
+
+export const saveGeneratedImage = (data: { userId: string, userName: string, imageBase64: string, settings: string }): boolean => {
+    const images = getStoredImages();
+    const newImage: GeneratedImage = {
+        id: generateId(),
+        userId: data.userId,
+        userName: data.userName,
+        imageBase64: data.imageBase64,
+        date: new Date().toISOString(),
+        settings: data.settings
+    };
+    
+    images.unshift(newImage);
+
+    // Storage Management: localStorage limit is usually 5-10MB.
+    // If we exceed quota, remove oldest images.
+    try {
+        localStorage.setItem(STORAGE_KEY_IMAGES, JSON.stringify(images));
+    } catch (e: any) {
+        if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
+            // Remove last 5 images and try again
+            if (images.length > 5) {
+                const trimmedImages = images.slice(0, images.length - 5);
+                try {
+                     localStorage.setItem(STORAGE_KEY_IMAGES, JSON.stringify(trimmedImages));
+                     return true;
+                } catch(retryErr) {
+                    // Critical fail
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+    return true;
+};
+
+export const getAllGeneratedImages = (): GeneratedImage[] => {
+    return getStoredImages();
+};
+
+export const getUserGeneratedImages = (userId: string): GeneratedImage[] => {
+    const images = getStoredImages();
+    return images.filter(img => img.userId === userId);
 };

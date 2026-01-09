@@ -1,9 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Camera, Upload, Download, RefreshCw, Image as ImageIcon, ScanFace, FileImage, ZoomIn, RotateCcw, Wand2, Zap, CheckCircle2, Maximize2, LogOut, Wallet, PlusCircle, X, History, Clock, AlertTriangle } from 'lucide-react';
+import { Camera, Upload, Download, RefreshCw, Image as ImageIcon, ScanFace, FileImage, ZoomIn, RotateCcw, Wand2, Zap, CheckCircle2, Maximize2, LogOut, Wallet, PlusCircle, X, History, Clock, AlertTriangle, ArrowUpRight, ArrowDownLeft, LayoutGrid, Calendar } from 'lucide-react';
 import { Controls } from './Controls';
+import { ChatSupport } from './ChatSupport';
 import { generatePassportPhoto, blobToBase64, getFaceAnalysis } from '../services/geminiService';
-import { updateBalance, createRechargeRequest, getUserRechargeRequests } from '../services/authService';
-import { BackgroundColor, DressType, PhotoSettings, ProcessingStatus, User, RechargeRequest } from '../types';
+import { updateBalance, createRechargeRequest, getUserRechargeRequests, getUserTransactions, saveGeneratedImage, getUserGeneratedImages } from '../services/authService';
+import { BackgroundColor, DressType, PhotoSettings, ProcessingStatus, User, RechargeRequest, Transaction, GeneratedImage } from '../types';
 
 interface UserPanelProps {
     user: User;
@@ -17,14 +18,24 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
   const [generatedImage, setGeneratedImage] = useState<string | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>({ isProcessing: false, message: '' });
   const [analyzing, setAnalyzing] = useState(false);
-  const [showRechargeModal, setShowRechargeModal] = useState(false);
+  const [showWalletModal, setShowWalletModal] = useState(false);
   const [showCostModal, setShowCostModal] = useState(false);
   
-  // Recharge Form State
+  // Gallery State
+  const [showGallery, setShowGallery] = useState(false);
+  const [galleryImages, setGalleryImages] = useState<GeneratedImage[]>([]);
+  const [filterDate, setFilterDate] = useState('');
+  
+  // Logic state for free regenerate
+  const [isPaidSession, setIsPaidSession] = useState(false);
+  
+  // Wallet/Recharge State
+  const [walletTab, setWalletTab] = useState<'recharge' | 'history'>('recharge');
   const [rechargeAmount, setRechargeAmount] = useState('');
   const [senderNumber, setSenderNumber] = useState('');
   const [trxId, setTrxId] = useState('');
-  const [rechargeHistory, setRechargeHistory] = useState<RechargeRequest[]>([]);
+  const [rechargeRequests, setRechargeRequests] = useState<RechargeRequest[]>([]);
+  const [transactionHistory, setTransactionHistory] = useState<Transaction[]>([]);
   const [isSubmittingRecharge, setIsSubmittingRecharge] = useState(false);
   
   // Transform State (For Generated Image Preview)
@@ -68,11 +79,24 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
 
   // Load history when modal opens
   useEffect(() => {
-    if (showRechargeModal) {
-        const history = getUserRechargeRequests(user.id);
-        setRechargeHistory(history);
+    if (showWalletModal) {
+        // Load recharges
+        const recharges = getUserRechargeRequests(user.id);
+        setRechargeRequests(recharges);
+        
+        // Load transactions
+        const transactions = getUserTransactions(user.id);
+        setTransactionHistory(transactions);
     }
-  }, [showRechargeModal, user.id]);
+  }, [showWalletModal, user.id, walletTab]);
+
+  // Load Gallery
+  useEffect(() => {
+      if (showGallery) {
+          const images = getUserGeneratedImages(user.id);
+          setGalleryImages(images);
+      }
+  }, [showGallery, user.id]);
 
   // Handlers
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -86,6 +110,8 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
         const base64 = await blobToBase64(file);
         setOriginalImage(base64);
         setGeneratedImage(null);
+        // Reset paid status for new image
+        setIsPaidSession(false);
       } catch (error) {
         console.error("Error reading file", error);
       }
@@ -284,7 +310,7 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
 
       // Fetch fresh history immediately
       const updatedHistory = getUserRechargeRequests(user.id);
-      setRechargeHistory(updatedHistory);
+      setRechargeRequests(updatedHistory);
       
       setRechargeAmount('');
       setSenderNumber('');
@@ -299,9 +325,16 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
   const handleGenerateClick = () => {
     if (!originalImage) return;
 
+    // If session is already paid, skip check
+    if (isPaidSession) {
+        executeGeneration();
+        return;
+    }
+
     if (user.balance < 3) {
         alert("আপনার পর্যাপ্ত ব্যালেন্স নেই। ছবি তৈরি করতে ৩ টাকা প্রয়োজন। অনুগ্রহ করে রিচার্জ করুন।");
-        setShowRechargeModal(true);
+        setShowWalletModal(true);
+        setWalletTab('recharge');
         return;
     }
     
@@ -356,9 +389,20 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
       setGeneratedImage(finalUrl);
       setStatus({ isProcessing: false, message: '' });
 
-      // --- DEDUCT BALANCE ---
-      await updateBalance(user.id, -3);
-      onRefreshUser(); // Refresh UI to show new balance
+      // Save the generated image
+      saveGeneratedImage({
+          userId: user.id,
+          userName: user.name,
+          imageBase64: finalUrl,
+          settings: `${settings.sizePreset}, ${settings.bgColor}`
+      });
+
+      // --- DEDUCT BALANCE (Only if not already paid for this session) ---
+      if (!isPaidSession) {
+          await updateBalance(user.id, -3, 'Passport Photo Generation');
+          setIsPaidSession(true); // Mark session as paid
+          onRefreshUser(); // Refresh UI to show new balance
+      }
 
     } catch (error) {
       clearInterval(intervalId);
@@ -393,46 +437,16 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
   };
 
   // --- DOWNLOAD LOGIC ---
-  const handleDownload = async () => {
-    if (!generatedImage) return;
+  const handleDownload = async (imgUrl?: string) => {
+    const source = imgUrl || generatedImage;
+    if (!source) return;
     
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.src = generatedImage;
-
-    await new Promise((resolve) => { img.onload = resolve; });
-
-    canvas.width = img.width;
-    canvas.height = img.height;
-
-    if (ctx) {
-        ctx.fillStyle = settings.bgColor;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        const cx = canvas.width / 2;
-        const cy = canvas.height / 2;
-
-        ctx.translate(cx, cy);
-        ctx.translate(transform.x, transform.y);
-        ctx.scale(transform.scale, transform.scale);
-        ctx.translate(-cx, -cy);
-
-        ctx.drawImage(img, 0, 0);
-
-        let suffix = 'photo';
-        if (settings.sizePreset === '300x300') suffix = '300x300';
-        else if (settings.sizePreset === 'passport') suffix = '40x50mm';
-        else suffix = `${settings.customWidth}x${settings.customHeight}`;
-
-        const link = document.createElement('a');
-        link.href = canvas.toDataURL('image/jpeg', 0.95);
-        link.download = `anan-tech-${suffix}-${Date.now()}.jpg`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
+    const link = document.createElement('a');
+    link.href = source;
+    link.download = `anan-tech-photo-${Date.now()}.jpg`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const handleReset = () => {
@@ -441,6 +455,8 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
     setTransform({ x: 0, y: 0, scale: 1 });
     setOrigTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
     setStatus({ isProcessing: false, message: '' });
+    // Reset paid status for new attempt
+    setIsPaidSession(false);
   };
 
   const handleResetPosition = () => {
@@ -458,6 +474,13 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
       return '1/1';
   };
 
+  // Filter Logic for Gallery
+  const filteredImages = galleryImages.filter(img => {
+      if (!filterDate) return true;
+      const imgDate = new Date(img.date).toISOString().slice(0, 10);
+      return imgDate === filterDate;
+  });
+
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 selection:bg-blue-100 selection:text-blue-900">
       
@@ -474,9 +497,18 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
             </div>
           </div>
           <div className="flex items-center gap-3">
+               {/* Gallery Button */}
+              <button 
+                onClick={() => setShowGallery(true)}
+                className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all border border-slate-200"
+              >
+                  <LayoutGrid size={14} />
+                  গ্যালারি
+              </button>
+
               {/* Balance Badge */}
               <button 
-                onClick={() => setShowRechargeModal(true)}
+                onClick={() => setShowWalletModal(true)}
                 className="flex items-center gap-2 bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-4 py-1.5 rounded-full font-bold text-sm shadow-md hover:shadow-lg transition-all"
               >
                   <Wallet size={16} />
@@ -613,11 +645,18 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
                             <ScanFace className="text-blue-600" size={20} /> 
                             <span className="font-bold text-slate-800">প্রিভিউ স্টুডিও</span>
                         </div>
-                        {generatedImage && (
-                            <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-green-600 bg-green-50 px-3 py-1 rounded-full border border-green-100">
-                                <CheckCircle2 size={12}/> Ready
-                            </span>
-                        )}
+                        <div className="flex gap-2">
+                            {isPaidSession && originalImage && (
+                                <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-purple-600 bg-purple-50 px-3 py-1 rounded-full border border-purple-100">
+                                    <CheckCircle2 size={12}/> Paid Session
+                                </span>
+                            )}
+                            {generatedImage && (
+                                <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-green-600 bg-green-50 px-3 py-1 rounded-full border border-green-100">
+                                    <CheckCircle2 size={12}/> Ready
+                                </span>
+                            )}
+                        </div>
                     </div>
 
                     {/* Canvas Area */}
@@ -725,7 +764,7 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
                                     </div>
 
                                     <button
-                                        onClick={handleDownload}
+                                        onClick={() => handleDownload()}
                                         className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-bold text-sm shadow-lg hover:shadow-blue-500/30 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2"
                                     >
                                         <Download size={18} />
@@ -782,90 +821,138 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
             </div>
         )}
 
-        {/* Recharge Modal */}
-        {showRechargeModal && (
+        {/* Wallet Modal (Recharge + History) */}
+        {showWalletModal && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
                 <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-fade-in-up flex flex-col max-h-[90vh]">
                     <div className="bg-pink-600 p-6 text-white text-center flex-shrink-0">
-                        <h3 className="text-xl font-bold">ব্যালেন্স রিচার্জ</h3>
-                        <p className="text-pink-100 text-xs">বিকাশ পেমেন্ট</p>
+                        <h3 className="text-xl font-bold">আমার ওয়ালেট</h3>
+                        <p className="text-pink-100 text-xs">ব্যালেন্স: ৳ {user.balance}</p>
+                    </div>
+
+                    {/* Tabs */}
+                    <div className="flex bg-slate-50 border-b border-slate-200">
+                        <button 
+                            onClick={() => setWalletTab('recharge')}
+                            className={`flex-1 py-3 text-xs font-bold transition-colors border-b-2 ${walletTab === 'recharge' ? 'text-pink-600 border-pink-600 bg-white' : 'text-slate-500 border-transparent hover:text-slate-700'}`}
+                        >
+                            রিচার্জ
+                        </button>
+                        <button 
+                            onClick={() => setWalletTab('history')}
+                            className={`flex-1 py-3 text-xs font-bold transition-colors border-b-2 ${walletTab === 'history' ? 'text-pink-600 border-pink-600 bg-white' : 'text-slate-500 border-transparent hover:text-slate-700'}`}
+                        >
+                            হিস্টোরি
+                        </button>
                     </div>
                     
                     <div className="flex-grow overflow-y-auto custom-scrollbar p-6">
-                        {/* Info Section */}
-                        <div className="bg-pink-50 border border-pink-100 rounded-xl p-4 mb-6 text-center">
-                            <p className="text-xs text-slate-600 mb-1">এই নাম্বারে টাকা সেন্ড মানি করুন:</p>
-                            <h4 className="text-xl font-bold text-pink-600 font-mono tracking-wide selection:bg-pink-200">01795-535444</h4>
-                            <p className="text-xs font-bold text-slate-500 mt-1">bKash Personal</p>
-                        </div>
+                        {walletTab === 'recharge' ? (
+                            <>
+                                {/* Info Section */}
+                                <div className="bg-pink-50 border border-pink-100 rounded-xl p-4 mb-6 text-center">
+                                    <p className="text-xs text-slate-600 mb-1">এই নাম্বারে টাকা সেন্ড মানি করুন:</p>
+                                    <h4 className="text-xl font-bold text-pink-600 font-mono tracking-wide selection:bg-pink-200">01540-013418</h4>
+                                    <p className="text-xs font-bold text-slate-500 mt-1">bKash Personal</p>
+                                </div>
 
-                        {/* Form */}
-                        <form onSubmit={handleSubmitRecharge} className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">পরিমাণ (টাকা)</label>
-                                <input 
-                                    type="number" required placeholder="উদাহরণ: 100" min="50"
-                                    value={rechargeAmount} onChange={e => setRechargeAmount(e.target.value)}
-                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-pink-500 outline-none font-medium"
-                                />
-                                <p className="text-[10px] text-red-500 font-bold mt-1">* সর্বনিম্ন রিচার্জ হবে ৫০ টাকা</p>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">যে নাম্বার থেকে পাঠিয়েছেন</label>
-                                <input 
-                                    type="text" required placeholder="01XXXXXXXXX"
-                                    value={senderNumber} onChange={e => setSenderNumber(e.target.value)}
-                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-pink-500 outline-none font-medium"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 mb-1">TrxID</label>
-                                <input 
-                                    type="text" required placeholder="8N7..."
-                                    value={trxId} onChange={e => setTrxId(e.target.value)}
-                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-pink-500 outline-none font-medium uppercase font-mono"
-                                />
-                            </div>
-
-                            <button 
-                                type="submit" 
-                                disabled={isSubmittingRecharge}
-                                className="w-full py-3 bg-pink-600 text-white rounded-xl font-bold hover:bg-pink-700 transition-all shadow-lg shadow-pink-500/30 flex items-center justify-center gap-2"
-                            >
-                                {isSubmittingRecharge ? 'রিকোয়েস্ট পাঠানো হচ্ছে...' : 'ভেরিফাই করুন'}
-                            </button>
-                        </form>
-
-                        {/* History */}
-                        <div className="mt-8 border-t border-slate-100 pt-4">
-                            <h5 className="text-xs font-bold text-slate-400 mb-3 flex items-center gap-1">
-                                <History size={12}/> সাম্প্রতিক রিকোয়েস্ট
-                            </h5>
-                            <div className="space-y-2">
-                                {rechargeHistory.length === 0 ? (
-                                    <p className="text-center text-xs text-slate-400 py-2">কোনো রেকর্ড নেই</p>
-                                ) : rechargeHistory.map(req => (
-                                    <div key={req.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100 text-xs">
-                                        <div>
-                                            <p className="font-bold text-slate-700">৳ {req.amount}</p>
-                                            <p className="text-[10px] text-slate-400">{new Date(req.date).toLocaleDateString()}</p>
-                                        </div>
-                                        <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                                            req.status === 'approved' ? 'bg-green-100 text-green-600' :
-                                            req.status === 'rejected' ? 'bg-red-100 text-red-600' :
-                                            'bg-yellow-100 text-yellow-600'
-                                        }`}>
-                                            {req.status}
-                                        </span>
+                                {/* Form */}
+                                <form onSubmit={handleSubmitRecharge} className="space-y-4">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">পরিমাণ (টাকা)</label>
+                                        <input 
+                                            type="number" required placeholder="উদাহরণ: 100" min="50"
+                                            value={rechargeAmount} onChange={e => setRechargeAmount(e.target.value)}
+                                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-pink-500 outline-none font-medium"
+                                        />
+                                        <p className="text-[10px] text-red-500 font-bold mt-1">* সর্বনিম্ন রিচার্জ হবে ৫০ টাকা</p>
                                     </div>
-                                ))}
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">যে নাম্বার থেকে পাঠিয়েছেন</label>
+                                        <input 
+                                            type="text" required placeholder="01XXXXXXXXX"
+                                            value={senderNumber} onChange={e => setSenderNumber(e.target.value)}
+                                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-pink-500 outline-none font-medium"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 mb-1">TrxID</label>
+                                        <input 
+                                            type="text" required placeholder="8N7..."
+                                            value={trxId} onChange={e => setTrxId(e.target.value)}
+                                            className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-pink-500 outline-none font-medium uppercase font-mono"
+                                        />
+                                    </div>
+
+                                    <button 
+                                        type="submit" 
+                                        disabled={isSubmittingRecharge}
+                                        className="w-full py-3 bg-pink-600 text-white rounded-xl font-bold hover:bg-pink-700 transition-all shadow-lg shadow-pink-500/30 flex items-center justify-center gap-2"
+                                    >
+                                        {isSubmittingRecharge ? 'রিকোয়েস্ট পাঠানো হচ্ছে...' : 'ভেরিফাই করুন'}
+                                    </button>
+                                </form>
+
+                                {/* Recent Recharge Requests */}
+                                <div className="mt-8 border-t border-slate-100 pt-4">
+                                    <h5 className="text-xs font-bold text-slate-400 mb-3 flex items-center gap-1">
+                                        <History size={12}/> সাম্প্রতিক রিকোয়েস্ট
+                                    </h5>
+                                    <div className="space-y-2">
+                                        {rechargeRequests.length === 0 ? (
+                                            <p className="text-center text-xs text-slate-400 py-2">কোনো রেকর্ড নেই</p>
+                                        ) : rechargeRequests.map(req => (
+                                            <div key={req.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100 text-xs">
+                                                <div>
+                                                    <p className="font-bold text-slate-700">৳ {req.amount}</p>
+                                                    <p className="text-[10px] text-slate-400">{new Date(req.date).toLocaleDateString()}</p>
+                                                </div>
+                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                                                    req.status === 'approved' ? 'bg-green-100 text-green-600' :
+                                                    req.status === 'rejected' ? 'bg-red-100 text-red-600' :
+                                                    'bg-yellow-100 text-yellow-600'
+                                                }`}>
+                                                    {req.status}
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="space-y-3">
+                                {transactionHistory.length === 0 ? (
+                                    <div className="text-center py-10">
+                                        <History size={32} className="mx-auto text-slate-200 mb-2"/>
+                                        <p className="text-xs text-slate-400">কোনো লেনদেনের হিস্টোরি নেই</p>
+                                    </div>
+                                ) : (
+                                    transactionHistory.map(tx => (
+                                        <div key={tx.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
+                                            <div className="flex items-center gap-3">
+                                                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${tx.type === 'credit' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                                                    {tx.type === 'credit' ? <ArrowDownLeft size={16}/> : <ArrowUpRight size={16}/>}
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-bold text-slate-700">{tx.description}</p>
+                                                    <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                                                        <Clock size={10}/> {new Date(tx.date).toLocaleDateString()} at {new Date(tx.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <span className={`text-sm font-bold ${tx.type === 'credit' ? 'text-green-600' : 'text-red-600'}`}>
+                                                {tx.type === 'credit' ? '+' : '-'} ৳{tx.amount}
+                                            </span>
+                                        </div>
+                                    ))
+                                )}
                             </div>
-                        </div>
+                        )}
                     </div>
 
                     <div className="p-4 border-t border-slate-100 bg-slate-50 flex-shrink-0">
                         <button 
-                            onClick={() => setShowRechargeModal(false)}
+                            onClick={() => setShowWalletModal(false)}
                             className="w-full py-2 bg-white border border-slate-200 text-slate-600 rounded-lg font-bold hover:bg-slate-100 transition-colors text-xs"
                         >
                             বন্ধ করুন
@@ -874,6 +961,67 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
                 </div>
             </div>
         )}
+
+        {/* Gallery Modal */}
+        {showGallery && (
+             <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+                 <div className="bg-white w-full max-w-4xl h-[80vh] rounded-2xl shadow-2xl overflow-hidden animate-fade-in-up flex flex-col">
+                     <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                        <div>
+                             <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2"><LayoutGrid size={20}/> আমার গ্যালারি</h3>
+                             <p className="text-xs text-slate-500">আপনার জেনারেট করা সকল ছবি এখানে পাবেন</p>
+                        </div>
+                        <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-1.5">
+                                <Calendar size={14} className="text-slate-400"/>
+                                <input 
+                                    type="date" 
+                                    className="text-xs outline-none bg-transparent"
+                                    value={filterDate}
+                                    onChange={(e) => setFilterDate(e.target.value)}
+                                />
+                            </div>
+                            <button onClick={() => setShowGallery(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors"><X size={20} /></button>
+                        </div>
+                     </div>
+                     
+                     <div className="flex-grow overflow-y-auto p-6 bg-slate-100/50 custom-scrollbar">
+                        {filteredImages.length === 0 ? (
+                            <div className="flex flex-col items-center justify-center h-full text-slate-400">
+                                <LayoutGrid size={48} className="mb-4 opacity-20" />
+                                <p>কোনো ছবি পাওয়া যায়নি</p>
+                                {filterDate && <button onClick={() => setFilterDate('')} className="mt-2 text-blue-600 text-xs font-bold hover:underline">ফিল্টার মুছুন</button>}
+                            </div>
+                        ) : (
+                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                {filteredImages.map((img) => (
+                                    <div key={img.id} className="group bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden hover:shadow-md transition-shadow relative">
+                                        <div className="aspect-[3/4] bg-slate-100 relative">
+                                            <img src={img.imageBase64} className="w-full h-full object-cover" alt="Generated" />
+                                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                                <button 
+                                                    onClick={() => handleDownload(img.imageBase64)}
+                                                    className="p-2 bg-white rounded-full text-slate-800 hover:text-blue-600 transition-colors"
+                                                    title="ডাউনলোড"
+                                                >
+                                                    <Download size={16} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="p-3">
+                                            <p className="text-[10px] text-slate-400">{new Date(img.date).toLocaleDateString()}</p>
+                                            <p className="text-[9px] text-slate-300 truncate">{img.settings}</p>
+                                        </div>
+                                    </div>
+                                ))}
+                             </div>
+                        )}
+                     </div>
+                 </div>
+             </div>
+        )}
+
+        <ChatSupport />
       </main>
     </div>
   );

@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { PhotoSettings, DressType } from "../types";
+import { PhotoSettings, DressType, ChatMessage } from "../types";
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
@@ -157,4 +157,41 @@ export const generatePassportPhoto = async (
     }
     
     throw new Error("No image generated. Please try a different photo or setting.");
+};
+
+// --- CHAT SUPPORT ---
+export const getChatResponse = async (history: ChatMessage[], newMessage: string): Promise<string> => {
+    const chat = ai.chats.create({
+        model: 'gemini-2.5-flash',
+        config: {
+            systemInstruction: `
+                You are a helpful and polite support assistant for 'Anan Tech Studio .ai', a passport photo making application.
+                
+                KEY INFORMATION:
+                1. Service: We create professional passport photos using AI (change background, dress, face smoothing).
+                2. Pricing: Each photo generation costs 3 BDT.
+                3. Payment/Recharge: Users must send money via 'Send Money' to 01540-013418 (bKash Personal). Minimum recharge is 50 BDT.
+                4. Issues: If balance is not added, users should provide their TrxID and Sender Number to the admin.
+                5. New Account Bonus: New users get 10 BDT free balance.
+                
+                RULES:
+                - Answer in Bengali (Bangla) primarily, or English if asked.
+                - Keep answers concise and helpful.
+                - Do not hallucinate features we don't have.
+                - Be friendly.
+            `
+        },
+        history: history.map(h => ({
+            role: h.role,
+            parts: [{ text: h.text }]
+        }))
+    });
+
+    try {
+        const response = await chat.sendMessage({ message: newMessage });
+        return response.text || "দুঃখিত, আমি বুঝতে পারিনি।";
+    } catch (e) {
+        console.error("Chat Error", e);
+        return "সার্ভারে সমস্যা হচ্ছে, কিছুক্ষণ পর আবার চেষ্টা করুন।";
+    }
 };

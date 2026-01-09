@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { User, RechargeRequest } from '../types';
-import { LogOut, Users, Activity, ShieldCheck, Plus, Coins, X, Check, Download, Upload, Database, Loader2, RefreshCw, Search, Wallet, AlertTriangle } from 'lucide-react';
-import { getAllUsers, createUser, updateBalance, getRechargeRequests, handleRechargeRequest, getFullDatabaseJSON, restoreDatabaseFromJSON } from '../services/authService';
+import { User, RechargeRequest, GeneratedImage } from '../types';
+import { LogOut, Users, Activity, ShieldCheck, Plus, Coins, X, Check, Download, Upload, Database, Loader2, RefreshCw, Search, Wallet, AlertTriangle, Minus, LayoutGrid, Calendar } from 'lucide-react';
+import { getAllUsers, createUser, updateBalance, getRechargeRequests, handleRechargeRequest, getFullDatabaseJSON, restoreDatabaseFromJSON, getAllGeneratedImages } from '../services/authService';
 
 interface AdminPanelProps {
     user: User;
@@ -9,10 +9,15 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'requests' | 'settings'>('dashboard');
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'requests' | 'gallery' | 'settings'>('dashboard');
     const [usersList, setUsersList] = useState<User[]>([]);
     const [requestList, setRequestList] = useState<RechargeRequest[]>([]);
+    const [galleryImages, setGalleryImages] = useState<GeneratedImage[]>([]);
     
+    // Filters
+    const [galleryDateFilter, setGalleryDateFilter] = useState('');
+    const [galleryUserSearch, setGalleryUserSearch] = useState('');
+
     // Modals State
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showBalanceModal, setShowBalanceModal] = useState(false);
@@ -23,9 +28,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
     // Selection for Balance Add
     const [selectedUser, setSelectedUser] = useState<User | null>(null);
     const [balanceAmount, setBalanceAmount] = useState('');
+    const [balanceActionType, setBalanceActionType] = useState<'add' | 'deduct'>('add');
 
     // Create User Form
-    const [newUser, setNewUser] = useState({ username: '', password: '', name: '', balance: 100 });
+    const [newUser, setNewUser] = useState({ username: '', password: '', name: '', balance: 0 });
     
     // Processing States
     const [isProcessing, setIsProcessing] = useState(false);
@@ -36,6 +42,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
     const refreshData = () => {
         setUsersList(getAllUsers());
         setRequestList(getRechargeRequests());
+        setGalleryImages(getAllGeneratedImages());
     };
 
     // Auto refresh every 5 seconds to catch new requests
@@ -53,7 +60,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
         try {
             await createUser({ ...newUser, role: 'user' });
             setShowCreateModal(false);
-            setNewUser({ username: '', password: '', name: '', balance: 100 });
+            setNewUser({ username: '', password: '', name: '', balance: 0 });
             refreshData();
             alert('ইউজার সফলভাবে তৈরি হয়েছে!');
         } catch (error: any) {
@@ -66,24 +73,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
     const openBalanceModal = (u: User) => {
         setSelectedUser(u);
         setBalanceAmount('');
+        setBalanceActionType('add');
         setShowBalanceModal(true);
     };
 
-    const handleAddBalance = async (e: React.FormEvent) => {
+    const handleUpdateBalance = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!selectedUser) return;
         
-        const amount = parseInt(balanceAmount);
+        let amount = parseInt(balanceAmount);
         if (isNaN(amount) || amount <= 0) {
             alert("সঠিক টাকার পরিমাণ দিন");
             return;
         }
 
+        // Handle deduction
+        if (balanceActionType === 'deduct') {
+            amount = -amount;
+        }
+
         setIsProcessing(true);
         try {
-            const result = await updateBalance(selectedUser.id, amount);
+            // Updated call with description
+            const result = await updateBalance(
+                selectedUser.id, 
+                amount, 
+                balanceActionType === 'add' ? 'Admin Added Balance' : 'Admin Deducted Balance'
+            );
+            
             if (result) {
-                alert(`সফলভাবে ${amount} টাকা যুক্ত হয়েছে।`);
+                alert(`সফলভাবে ব্যালেন্স আপডেট হয়েছে।`);
                 setShowBalanceModal(false);
                 refreshData();
             } else {
@@ -156,6 +175,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
         e.target.value = '';
     };
 
+    // Filter Logic for Gallery
+    const filteredGallery = galleryImages.filter(img => {
+        const matchesDate = !galleryDateFilter || new Date(img.date).toISOString().slice(0, 10) === galleryDateFilter;
+        const matchesUser = !galleryUserSearch || img.userName.toLowerCase().includes(galleryUserSearch.toLowerCase());
+        return matchesDate && matchesUser;
+    });
+
     const pendingRequests = requestList.filter(r => r.status === 'pending').length;
 
     return (
@@ -170,7 +196,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                         <h1 className="text-lg font-bold text-white tracking-wide hidden sm:block">Admin Dashboard</h1>
                         <h1 className="text-lg font-bold text-white tracking-wide sm:hidden">Admin</h1>
                     </div>
-                    <div className="flex items-center gap-2 sm:gap-4">
+                    <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto">
                         <nav className="flex gap-1">
                             <button 
                                 onClick={() => setActiveTab('dashboard')}
@@ -195,6 +221,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                     </span>
                                 )}
                             </button>
+                            <button 
+                                onClick={() => setActiveTab('gallery')}
+                                className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors ${activeTab === 'gallery' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                গ্যালারি
+                            </button>
                              <button 
                                 onClick={() => setActiveTab('settings')}
                                 className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors ${activeTab === 'settings' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'}`}
@@ -218,7 +250,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                 
                 {activeTab === 'dashboard' && (
                     <div className="animate-fade-in-up">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
                                 <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center">
                                     <Users size={28} />
@@ -235,6 +267,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                 <div>
                                     <p className="text-sm text-slate-500 font-medium">পেন্ডিং রিকোয়েস্ট</p>
                                     <h3 className="text-2xl font-bold text-slate-800">{pendingRequests}</h3>
+                                </div>
+                            </div>
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
+                                <div className="w-14 h-14 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center">
+                                    <LayoutGrid size={28} />
+                                </div>
+                                <div>
+                                    <p className="text-sm text-slate-500 font-medium">মোট ছবি</p>
+                                    <h3 className="text-2xl font-bold text-slate-800">{galleryImages.length}</h3>
                                 </div>
                             </div>
                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
@@ -291,9 +332,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                                 <td className="px-6 py-4 text-right">
                                                     <button 
                                                         onClick={() => openBalanceModal(u)}
-                                                        className="inline-flex items-center gap-1.5 text-xs font-bold text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-lg transition-colors shadow-sm"
+                                                        className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors border border-slate-200"
                                                     >
-                                                        <Plus size={14} /> ব্যালেন্স অ্যাড
+                                                        <Coins size={14} /> ব্যালেন্স
                                                     </button>
                                                 </td>
                                             </tr>
@@ -392,6 +433,76 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                     </div>
                 )}
 
+                {activeTab === 'gallery' && (
+                     <div className="space-y-6 animate-fade-in-up">
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            <h2 className="text-2xl font-bold text-slate-800">গ্যালারি হিস্টোরি</h2>
+                            <div className="flex flex-wrap items-center gap-3">
+                                 <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2">
+                                    <Calendar size={16} className="text-slate-400"/>
+                                    <input 
+                                        type="date" 
+                                        className="text-xs outline-none bg-transparent"
+                                        value={galleryDateFilter}
+                                        onChange={(e) => setGalleryDateFilter(e.target.value)}
+                                    />
+                                </div>
+                                <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 w-48">
+                                    <Search size={16} className="text-slate-400"/>
+                                    <input 
+                                        type="text" 
+                                        className="text-xs outline-none bg-transparent w-full"
+                                        placeholder="ইউজার সার্চ করুন..."
+                                        value={galleryUserSearch}
+                                        onChange={(e) => setGalleryUserSearch(e.target.value)}
+                                    />
+                                </div>
+                                {(galleryDateFilter || galleryUserSearch) && (
+                                     <button 
+                                        onClick={() => {setGalleryDateFilter(''); setGalleryUserSearch('');}}
+                                        className="text-xs text-red-500 font-bold hover:underline"
+                                     >
+                                         রিসেট
+                                     </button>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 min-h-[400px]">
+                            {filteredGallery.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+                                    <LayoutGrid size={48} className="mb-4 opacity-20" />
+                                    <p>কোনো ছবি পাওয়া যায়নি</p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                                    {filteredGallery.map((img) => (
+                                        <div key={img.id} className="group bg-slate-50 rounded-xl shadow-sm border border-slate-200 overflow-hidden relative">
+                                            <div className="aspect-[3/4] bg-slate-200 relative">
+                                                <img src={img.imageBase64} className="w-full h-full object-cover" alt="Generated" />
+                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                    <a 
+                                                        href={img.imageBase64} 
+                                                        download={`anan-tech-${img.id}.jpg`}
+                                                        className="p-2 bg-white rounded-full text-slate-800 hover:text-blue-600 transition-colors"
+                                                        title="ডাউনলোড"
+                                                    >
+                                                        <Download size={16} />
+                                                    </a>
+                                                </div>
+                                            </div>
+                                            <div className="p-2 bg-white">
+                                                <p className="text-[10px] font-bold text-slate-800 truncate">{img.userName}</p>
+                                                <p className="text-[9px] text-slate-400">{new Date(img.date).toLocaleDateString()}</p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 {activeTab === 'settings' && (
                     <div className="space-y-6 animate-fade-in-up">
                          <div className="flex justify-between items-center">
@@ -436,7 +547,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                 )}
             </main>
 
-            {/* Create User Modal */}
+            {/* Create User Modal (ADMIN) */}
             {showCreateModal && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
                     <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden animate-fade-in-up">
@@ -495,19 +606,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                 </div>
             )}
 
-            {/* Add Balance Modal */}
+            {/* Manage Balance Modal */}
             {showBalanceModal && selectedUser && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
                     <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-fade-in-up">
                         <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                            <h3 className="font-bold text-slate-800">ব্যালেন্স যুক্ত করুন</h3>
+                            <h3 className="font-bold text-slate-800">ব্যালেন্স ম্যানেজমেন্ট</h3>
                             <button onClick={() => setShowBalanceModal(false)} className="p-1 hover:bg-slate-200 rounded-full transition-colors"><X size={18} /></button>
                         </div>
-                        <form onSubmit={handleAddBalance} className="p-6">
+                        <form onSubmit={handleUpdateBalance} className="p-6">
                             <div className="text-center mb-6">
                                 <img src={selectedUser.avatar} className="w-16 h-16 rounded-full mx-auto mb-2 border-2 border-slate-100" alt=""/>
                                 <h4 className="font-bold text-slate-800">{selectedUser.name}</h4>
-                                <p className="text-xs text-slate-500">বর্তমান: <span className="font-bold text-green-600">৳{selectedUser.balance}</span></p>
+                                <p className="text-xs text-slate-500">বর্তমান: <span className="font-bold text-slate-800">৳{selectedUser.balance}</span></p>
+                            </div>
+
+                            {/* Action Toggle */}
+                            <div className="flex bg-slate-100 p-1 rounded-lg mb-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setBalanceActionType('add')}
+                                    className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition-all ${balanceActionType === 'add' ? 'bg-white text-green-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    <Plus size={14} /> যোগ করুন
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setBalanceActionType('deduct')}
+                                    className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition-all ${balanceActionType === 'deduct' ? 'bg-white text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    <Minus size={14} /> বিয়োগ করুন
+                                </button>
                             </div>
 
                             <div className="mb-6">
@@ -519,7 +648,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                     <input 
                                         type="number" required min="1" autoFocus
                                         value={balanceAmount} onChange={e => setBalanceAmount(e.target.value)}
-                                        className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-green-500 outline-none font-bold text-lg text-slate-800"
+                                        className={`w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 outline-none font-bold text-lg text-slate-800 ${balanceActionType === 'add' ? 'focus:ring-green-500' : 'focus:ring-red-500'}`}
                                         placeholder="0"
                                     />
                                 </div>
@@ -528,11 +657,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                             <button 
                                 type="submit" 
                                 disabled={isProcessing}
-                                className="w-full py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-all flex items-center justify-center gap-2"
+                                className={`w-full py-3 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 ${balanceActionType === 'add' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
                             >
                                 {isProcessing ? <Loader2 className="animate-spin" size={18}/> : (
                                     <>
-                                        <Plus size={18} /> টাকা যোগ করুন
+                                        {balanceActionType === 'add' ? <Plus size={18} /> : <Minus size={18} />} 
+                                        {balanceActionType === 'add' ? 'টাকা যোগ করুন' : 'টাকা কেটে নিন'}
                                     </>
                                 )}
                             </button>
