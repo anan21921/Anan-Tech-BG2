@@ -1,7 +1,17 @@
 import { GoogleGenAI } from "@google/genai";
 import { PhotoSettings, DressType, ChatMessage } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+if (!apiKey) {
+  console.error("API Key missing");
+}
+
+// উদাহরণ: Gemini call
+// const response = await fetch('https://api.generativeai.google.com/v1/...', {
+//   headers: { 'Authorization': `Bearer ${apiKey}` }
+// });
+
 
 // Helper to convert blob to base64 Data URL (includes prefix)
 export const blobToBase64 = (blob: Blob): Promise<string> => {
