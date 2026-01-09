@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { User, RechargeRequest, GeneratedImage } from '../types';
-import { LogOut, Users, Activity, ShieldCheck, Plus, Coins, X, Check, Download, Upload, Database, Loader2, RefreshCw, Search, Wallet, AlertTriangle, Minus, LayoutGrid, Calendar } from 'lucide-react';
-import { getAllUsers, createUser, updateBalance, getRechargeRequests, handleRechargeRequest, getFullDatabaseJSON, restoreDatabaseFromJSON, getAllGeneratedImages } from '../services/authService';
+
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { User, RechargeRequest, GeneratedImage, SupportMessage } from '../types';
+import { LogOut, Users, ShieldCheck, Plus, Minus, Coins, X, Check, Download, Loader2, RefreshCw, Search, LayoutGrid, Calendar, Bell, MessageSquare, Send, CheckCheck, Mic, Image as ImageIcon, MoreVertical } from 'lucide-react';
+import { getAllUsers, createUser, updateBalance, getRechargeRequests, handleRechargeRequest, getAllGeneratedImages, getAllChats, sendSupportMessage, markMessagesAsSeen } from '../services/authService';
+import { blobToBase64 } from '../services/geminiService';
 
 interface AdminPanelProps {
     user: User;
@@ -9,11 +11,24 @@ interface AdminPanelProps {
 }
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'requests' | 'gallery' | 'settings'>('dashboard');
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'requests' | 'gallery' | 'chat'>('dashboard');
     const [usersList, setUsersList] = useState<User[]>([]);
     const [requestList, setRequestList] = useState<RechargeRequest[]>([]);
     const [galleryImages, setGalleryImages] = useState<GeneratedImage[]>([]);
+    const [chats, setChats] = useState<Record<string, SupportMessage[]>>({});
+    const [pendingChatCount, setPendingChatCount] = useState(0);
     
+    // Siren State
+    const prevPendingRef = useRef(0);
+    const audioRef = useRef<HTMLAudioElement | null>(null);
+    const prevChatCountsRef = useRef<Record<string, number>>({}); 
+
+    // Chat State
+    const [selectedChatUser, setSelectedChatUser] = useState<string | null>(null);
+    const [adminMessage, setAdminMessage] = useState('');
+    const chatScrollRef = useRef<HTMLDivElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
     // Filters
     const [galleryDateFilter, setGalleryDateFilter] = useState('');
     const [galleryUserSearch, setGalleryUserSearch] = useState('');
@@ -37,20 +52,89 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [processingId, setProcessingId] = useState<string | null>(null);
 
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    // Initialize Audio
+    useEffect(() => {
+        // Simple notification sound
+        audioRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3'); 
+    }, []);
 
-    const refreshData = () => {
-        setUsersList(getAllUsers());
-        setRequestList(getRechargeRequests());
-        setGalleryImages(getAllGeneratedImages());
+    const playNotification = () => {
+        if (audioRef.current) {
+            audioRef.current.volume = 1.0;
+            audioRef.current.currentTime = 0;
+            audioRef.current.play().catch(e => console.warn("Audio autoplay blocked:", e));
+        }
     };
 
-    // Auto refresh every 5 seconds to catch new requests
+    // Robust Refresh Data Function
+    const refreshData = useCallback(() => {
+        setUsersList(getAllUsers());
+        
+        const requests = getRechargeRequests();
+        setRequestList(requests);
+        
+        // Always fetch fresh chats
+        const allChats = getAllChats();
+        setChats(allChats); 
+        
+        setGalleryImages(getAllGeneratedImages());
+
+        // Check for new pending requests (SIREN LOGIC)
+        const currentPending = requests.filter(r => r.status === 'pending').length;
+        if (currentPending > prevPendingRef.current) {
+            playNotification();
+        }
+        prevPendingRef.current = currentPending;
+
+        // Check for pending chats (Last message is NOT from admin and NOT seen)
+        let pChatCount = 0;
+        let hasNewMessage = false;
+
+        Object.keys(allChats).forEach(userId => {
+            const userMsgs = allChats[userId];
+            if (userMsgs && userMsgs.length > 0) {
+                const lastMsg = userMsgs[userMsgs.length - 1];
+                if (!lastMsg.isAdmin && lastMsg.status !== 'seen') {
+                    pChatCount++;
+                }
+
+                // Check for notification sound (if count increased)
+                const currentCount = userMsgs.length;
+                const prevCount = prevChatCountsRef.current[userId] || 0;
+                
+                if (currentCount > prevCount && !lastMsg.isAdmin) {
+                     hasNewMessage = true;
+                }
+                prevChatCountsRef.current[userId] = currentCount;
+            }
+        });
+
+        setPendingChatCount(pChatCount);
+
+        if (hasNewMessage) {
+            playNotification();
+        }
+
+        // If a chat is selected, mark as seen
+        if (selectedChatUser) {
+            markMessagesAsSeen(selectedChatUser, true);
+        }
+
+    }, [selectedChatUser]);
+
+    // Auto refresh every 2 seconds
     useEffect(() => {
-        refreshData();
-        const interval = setInterval(refreshData, 5000);
+        refreshData(); // Initial load
+        const interval = setInterval(refreshData, 2000);
         return () => clearInterval(interval);
-    }, []);
+    }, [refreshData]);
+
+    // Scroll chat to bottom
+    useEffect(() => {
+        if (chatScrollRef.current) {
+            chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+        }
+    }, [chats, selectedChatUser]);
 
     // --- HANDLERS ---
 
@@ -87,14 +171,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
             return;
         }
 
-        // Handle deduction
         if (balanceActionType === 'deduct') {
             amount = -amount;
         }
 
         setIsProcessing(true);
         try {
-            // Updated call with description
             const result = await updateBalance(
                 selectedUser.id, 
                 amount, 
@@ -121,14 +203,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
         const { id, type } = actionConfirm;
         
         setProcessingId(id);
-        setActionConfirm(null); // Close modal
+        setActionConfirm(null); 
 
         try {
             const success = await handleRechargeRequest(id, type);
             if (success) {
                 refreshData();
             } else {
-                alert('রিকোয়েস্ট প্রসেস করা সম্ভব হয়নি। ইউজার খুঁজে পাওয়া যায়নি বা রিকোয়েস্টটি আর পেন্ডিং নেই।');
+                alert('রিকোয়েস্ট প্রসেস করা সম্ভব হয়নি।');
                 refreshData(); 
             }
         } catch (e) {
@@ -139,40 +221,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
         }
     };
 
-    // --- DATABASE BACKUP/RESTORE ---
-
-    const handleBackup = () => {
-        const json = getFullDatabaseJSON();
-        const blob = new Blob([json], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `anan-tech-db-${new Date().toISOString().slice(0,10)}.json`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    const handleSendAdminMessage = async (attachmentType?: 'image', attachmentData?: string) => {
+        if (!selectedChatUser) return;
+        if (!adminMessage.trim() && !attachmentData) return;
+        
+        sendSupportMessage(selectedChatUser, 'Support Admin', adminMessage, true, attachmentType, attachmentData);
+        setAdminMessage('');
+        refreshData(); 
     };
 
-    const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
-        if (!file) return;
-        
-        const reader = new FileReader();
-        reader.onload = (event) => {
+        if (file) {
             try {
-                const json = event.target?.result as string;
-                if (restoreDatabaseFromJSON(json)) {
-                    alert('ডাটাবেস সফলভাবে রিস্টোর হয়েছে! পেজ রিফ্রেশ হচ্ছে...');
-                    window.location.reload();
-                } else {
-                    alert('ভুল ফাইল ফরম্যাট।');
-                }
-            } catch (error) {
-                alert('ফাইল রিড করতে সমস্যা হয়েছে।');
+                const base64 = await blobToBase64(file);
+                await handleSendAdminMessage('image', base64);
+            } catch (err) {
+                console.error(err);
             }
-        };
-        reader.readAsText(file);
-        e.target.value = '';
+        }
     };
 
     // Filter Logic for Gallery
@@ -184,6 +251,27 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
 
     const pendingRequests = requestList.filter(r => r.status === 'pending').length;
 
+    // Helper to sort chats
+    const getSortedChatUserIds = () => {
+        return Object.keys(chats).sort((a, b) => {
+            const msgsA = chats[a];
+            const msgsB = chats[b];
+            
+            if (!msgsA || msgsA.length === 0) return 1;
+            if (!msgsB || msgsB.length === 0) return -1;
+
+            const lastA = new Date(msgsA[msgsA.length - 1].timestamp).getTime();
+            const lastB = new Date(msgsB[msgsB.length - 1].timestamp).getTime();
+            return lastB - lastA; // Descending (Newest first)
+        });
+    };
+
+    const StatusTick = ({ status }: { status: string }) => {
+        if (status === 'seen') return <CheckCheck size={14} className="text-blue-500" />;
+        if (status === 'delivered') return <CheckCheck size={14} className="text-slate-400" />;
+        return <Check size={14} className="text-slate-400" />;
+    };
+
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
              {/* Navbar */}
@@ -194,7 +282,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                              <ShieldCheck size={20} />
                         </div>
                         <h1 className="text-lg font-bold text-white tracking-wide hidden sm:block">Admin Dashboard</h1>
-                        <h1 className="text-lg font-bold text-white tracking-wide sm:hidden">Admin</h1>
+                        {pendingRequests > 0 && (
+                             <div className="flex items-center gap-2 bg-red-600 px-3 py-1 rounded-full animate-pulse cursor-pointer" onClick={() => setActiveTab('requests')}>
+                                <Bell size={14} className="text-white"/>
+                                <span className="text-white text-xs font-bold">{pendingRequests} Pending!</span>
+                             </div>
+                        )}
                     </div>
                     <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto">
                         <nav className="flex gap-1">
@@ -215,9 +308,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                 className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors relative ${activeTab === 'requests' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'}`}
                             >
                                 পেমেন্ট
-                                {pendingRequests > 0 && (
-                                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full animate-bounce">
-                                        {pendingRequests}
+                            </button>
+                            <button 
+                                onClick={() => setActiveTab('chat')}
+                                className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors relative ${activeTab === 'chat' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'}`}
+                            >
+                                লাইভ চ্যাট
+                                {pendingChatCount > 0 && (
+                                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 text-white text-[10px] flex items-center justify-center rounded-full animate-pulse border border-slate-900">
+                                        {pendingChatCount}
                                     </span>
                                 )}
                             </button>
@@ -226,12 +325,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                 className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors ${activeTab === 'gallery' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'}`}
                             >
                                 গ্যালারি
-                            </button>
-                             <button 
-                                onClick={() => setActiveTab('settings')}
-                                className={`px-3 py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors ${activeTab === 'settings' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'}`}
-                            >
-                                সেটিংস
                             </button>
                         </nav>
                         <div className="h-6 w-px bg-white/20 mx-2 hidden sm:block"></div>
@@ -278,22 +371,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                     <h3 className="text-2xl font-bold text-slate-800">{galleryImages.length}</h3>
                                 </div>
                             </div>
-                            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
-                                <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center">
-                                    <Activity size={28} />
+                             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex items-center gap-4">
+                                <div className="w-14 h-14 bg-green-50 text-green-600 rounded-full flex items-center justify-center">
+                                    <MessageSquare size={28} />
                                 </div>
                                 <div>
-                                    <p className="text-sm text-slate-500 font-medium">সিস্টেম স্ট্যাটাস</p>
-                                    <h3 className="text-lg font-bold text-green-600">Active</h3>
+                                    <p className="text-sm text-slate-500 font-medium">পেন্ডিং মেসেজ</p>
+                                    <h3 className="text-2xl font-bold text-slate-800">{pendingChatCount}</h3>
                                 </div>
                             </div>
                         </div>
                     </div>
                 )}
                 
+                {/* Users Tab */}
                 {activeTab === 'users' && (
                     <div className="space-y-6 animate-fade-in-up">
-                        <div className="flex justify-between items-center">
+                         <div className="flex justify-between items-center">
                             <h2 className="text-2xl font-bold text-slate-800">সকল ইউজার</h2>
                             <button 
                                 onClick={() => setShowCreateModal(true)}
@@ -302,8 +396,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                 <Plus size={18} /> নতুন ইউজার
                             </button>
                         </div>
-
-                        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                              <div className="overflow-x-auto">
                                 <table className="w-full text-left border-collapse">
                                     <thead>
@@ -322,7 +415,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                                     <img src={u.avatar} className="w-8 h-8 rounded-full bg-slate-200" alt=""/>
                                                     {u.name}
                                                 </td>
-                                                <td className="px-6 py-4 font-mono text-slate-500">{u.username}</td>
+                                                <td className="px-6 py-4 font-mono text-slate-500">
+                                                    {u.username}
+                                                </td>
                                                 <td className="px-6 py-4">
                                                     <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
                                                         {u.role}
@@ -346,15 +441,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                     </div>
                 )}
 
+                {/* Recharge Requests Tab */}
                 {activeTab === 'requests' && (
                     <div className="space-y-6 animate-fade-in-up">
-                        <div className="flex justify-between items-center">
+                         <div className="flex justify-between items-center">
                             <h2 className="text-2xl font-bold text-slate-800">রিচার্জ রিকোয়েস্ট</h2>
                             <button onClick={refreshData} className="p-2 text-slate-500 hover:bg-slate-100 rounded-full" title="Refresh">
                                 <RefreshCw size={20} />
                             </button>
                         </div>
-
+                        
                         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                              <div className="overflow-x-auto">
                                 <table className="w-full text-left border-collapse">
@@ -433,8 +529,200 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                     </div>
                 )}
 
+                {/* LIVE CHAT TAB (Whatsapp Web Style) */}
+                {activeTab === 'chat' && (
+                    <div className="animate-fade-in-up h-[calc(100vh-140px)] min-h-[600px] flex rounded-2xl overflow-hidden bg-white shadow-xl border border-slate-200">
+                        {/* Sidebar */}
+                        <div className="w-1/3 border-r border-slate-200 flex flex-col bg-white">
+                            <div className="p-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-full bg-slate-200 overflow-hidden">
+                                        <img src={user.avatar} className="w-full h-full object-cover" alt="Profile" />
+                                    </div>
+                                    <h3 className="font-bold text-slate-800">Chats</h3>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={refreshData} className="p-1.5 text-slate-500 hover:bg-slate-100 rounded-full transition-colors" title="Force Refresh">
+                                        <RefreshCw size={16} />
+                                    </button>
+                                    <MoreVertical size={20} className="text-slate-500"/>
+                                </div>
+                            </div>
+                            
+                            <div className="p-3 bg-white">
+                                <div className="flex items-center gap-2 bg-slate-100 px-3 py-2 rounded-lg">
+                                    <Search size={16} className="text-slate-400"/>
+                                    <input type="text" placeholder="Search or start new chat" className="bg-transparent text-sm outline-none flex-grow" />
+                                </div>
+                            </div>
+
+                            <div className="flex-grow overflow-y-auto custom-scrollbar">
+                                {Object.keys(chats).length === 0 ? (
+                                    <div className="p-6 text-center text-slate-400 text-sm">No conversations</div>
+                                ) : (
+                                    getSortedChatUserIds().map(userId => {
+                                        const userMessages = chats[userId];
+                                        if (!userMessages || userMessages.length === 0) return null;
+                                        const lastMsg = userMessages[userMessages.length - 1];
+                                        const userName = userMessages.find(m => m.senderName)?.senderName || 'User';
+                                        
+                                        // Unread calculation
+                                        const unreadCount = userMessages.filter(m => !m.isAdmin && m.status !== 'seen').length;
+
+                                        return (
+                                            <button 
+                                                key={userId}
+                                                onClick={() => setSelectedChatUser(userId)}
+                                                className={`w-full flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors border-b border-slate-50 ${selectedChatUser === userId ? 'bg-slate-100' : ''}`}
+                                            >
+                                                <div className="relative w-12 h-12 rounded-full bg-slate-200 flex-shrink-0 overflow-hidden">
+                                                    <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=random`} alt={userName} className="w-full h-full object-cover"/>
+                                                </div>
+                                                <div className="flex-1 text-left overflow-hidden">
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <div>
+                                                            <h4 className="font-bold text-slate-800 text-sm truncate">{userName}</h4>
+                                                        </div>
+                                                        <span className={`text-[10px] ${unreadCount > 0 ? 'text-green-500 font-bold' : 'text-slate-400'}`}>
+                                                            {new Date(lastMsg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex justify-between items-center">
+                                                        <p className="text-xs text-slate-500 truncate max-w-[80%] flex items-center gap-1">
+                                                            {lastMsg.isAdmin && <StatusTick status={lastMsg.status} />}
+                                                            {lastMsg.text || (lastMsg.attachmentType ? '📎 Media' : '')}
+                                                        </p>
+                                                        {unreadCount > 0 && (
+                                                            <span className="w-5 h-5 rounded-full bg-green-500 text-white text-[10px] flex items-center justify-center font-bold">
+                                                                {unreadCount}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        )
+                                    })
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Chat Window */}
+                        <div className="w-2/3 flex flex-col bg-[#efeae2]">
+                            {selectedChatUser ? (
+                                <>
+                                    {/* Header */}
+                                    <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between shadow-sm z-10">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-full bg-slate-300 overflow-hidden">
+                                                 <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(chats[selectedChatUser]?.find(m => m.senderName)?.senderName || 'User')}&background=random`} alt="" className="w-full h-full"/>
+                                            </div>
+                                            <div>
+                                                <h3 className="font-bold text-slate-800 text-sm">
+                                                    {chats[selectedChatUser]?.find(m => m.senderName)?.senderName || 'Chat'}
+                                                </h3>
+                                                <p className="text-xs text-slate-500">
+                                                    Online
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-4 text-slate-500 pr-4">
+                                            <Search size={20} />
+                                            <MoreVertical size={20} />
+                                        </div>
+                                    </div>
+
+                                    {/* Messages */}
+                                    <div ref={chatScrollRef} className="flex-grow overflow-y-auto p-6 space-y-4 custom-scrollbar" style={{ backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")', backgroundBlendMode: 'soft-light' }}>
+                                        {chats[selectedChatUser]?.map((msg) => (
+                                            <div key={msg.id} className={`flex ${msg.isAdmin ? 'justify-end' : 'justify-start'}`}>
+                                                <div className={`relative max-w-[65%] p-2.5 rounded-lg text-sm shadow-sm ${
+                                                    msg.isAdmin 
+                                                    ? 'bg-[#d9fdd3] text-slate-900 rounded-tr-none' 
+                                                    : 'bg-white text-slate-900 rounded-tl-none'
+                                                }`}>
+                                                    
+                                                    <div className="mb-2">
+                                                        {msg.attachmentType === 'image' && msg.attachmentData && (
+                                                            <div className="rounded overflow-hidden mb-1">
+                                                                <img src={msg.attachmentData} alt="Shared" className="max-w-full h-auto" />
+                                                            </div>
+                                                        )}
+                                                        {msg.attachmentType === 'audio' && msg.attachmentData && (
+                                                            <div className="flex items-center gap-2 min-w-[200px] py-1">
+                                                                <audio controls src={msg.attachmentData} className="h-8 w-full" />
+                                                            </div>
+                                                        )}
+                                                        {msg.text && !['image','audio'].includes(msg.attachmentType || '') && (
+                                                            <p className="whitespace-pre-wrap leading-relaxed">{msg.text}</p>
+                                                        )}
+                                                    </div>
+
+                                                    <div className="flex items-center justify-end gap-1 select-none">
+                                                        <span className="text-[10px] text-slate-500">
+                                                            {new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                                        </span>
+                                                        {msg.isAdmin && <StatusTick status={msg.status} />}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* Input */}
+                                    <div className="p-3 bg-slate-50 border-t border-slate-200 flex items-center gap-3">
+                                        <button 
+                                            onClick={() => fileInputRef.current?.click()}
+                                            className="text-slate-500 hover:text-slate-700 p-2"
+                                        >
+                                            <ImageIcon size={24} />
+                                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
+                                        </button>
+                                        
+                                        <form 
+                                            onSubmit={(e) => { e.preventDefault(); handleSendAdminMessage(); }}
+                                            className="flex-grow flex items-center gap-2 bg-white rounded-lg px-4 py-2 border border-slate-200"
+                                        >
+                                            <input 
+                                                type="text" 
+                                                value={adminMessage}
+                                                onChange={(e) => setAdminMessage(e.target.value)}
+                                                className="flex-grow bg-transparent outline-none text-sm text-slate-800"
+                                                placeholder="Type a message"
+                                            />
+                                        </form>
+                                        
+                                        {adminMessage.trim() ? (
+                                            <button 
+                                                onClick={() => handleSendAdminMessage()}
+                                                className="text-slate-500 hover:text-blue-600 p-2"
+                                            >
+                                                <Send size={24} />
+                                            </button>
+                                        ) : (
+                                             <button className="text-slate-500 hover:text-slate-700 p-2">
+                                                <Mic size={24} />
+                                            </button>
+                                        )}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center h-full text-slate-500 bg-slate-50 border-b-4 border-green-500">
+                                    <div className="mb-8">
+                                        <ShieldCheck size={80} className="text-slate-300" />
+                                    </div>
+                                    <h2 className="text-3xl font-light text-slate-600 mb-4">Anan Tech Support</h2>
+                                    <p className="text-sm text-slate-400">Send and receive messages without keeping your phone online.</p>
+                                    <p className="text-sm text-slate-400 mt-1">Use Anan Tech Studio on up to 4 linked devices and 1 phone.</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* Gallery Tab */}
                 {activeTab === 'gallery' && (
                      <div className="space-y-6 animate-fade-in-up">
+                        {/* Gallery controls omitted for brevity, keeping existing code logic */}
                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                             <h2 className="text-2xl font-bold text-slate-800">গ্যালারি হিস্টোরি</h2>
                             <div className="flex flex-wrap items-center gap-3">
@@ -477,7 +765,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                             ) : (
                                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
                                     {filteredGallery.map((img) => (
-                                        <div key={img.id} className="group bg-slate-50 rounded-xl shadow-sm border border-slate-200 overflow-hidden relative">
+                                        <div key={img.id} className="group bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden relative">
                                             <div className="aspect-[3/4] bg-slate-200 relative">
                                                 <img src={img.imageBase64} className="w-full h-full object-cover" alt="Generated" />
                                                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -499,49 +787,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                     ))}
                                 </div>
                             )}
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'settings' && (
-                    <div className="space-y-6 animate-fade-in-up">
-                         <div className="flex justify-between items-center">
-                            <h2 className="text-2xl font-bold text-slate-800">ডাটাবেস সেটিংস</h2>
-                        </div>
-                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
-                             <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                                <Database size={20} className="text-blue-600"/>
-                                ডাটা ব্যাকআপ ও রিস্টোর
-                             </h3>
-                             <p className="text-sm text-slate-500 mb-6 max-w-2xl">
-                                ব্রাউজার পরিবর্তন করলে লোকাল ডাটা হারিয়ে যেতে পারে। নিরাপদ থাকতে নিয়মিত ডাটা ডাউনলোড (Backup) করে রাখুন। 
-                                অন্য ব্রাউজারে বা ডিভাইসে কাজ করতে চাইলে ব্যাকআপ ফাইলটি এখানে আপলোড (Restore) করুন।
-                             </p>
-                             
-                             <div className="flex flex-col sm:flex-row gap-4">
-                                 <button 
-                                    onClick={handleBackup}
-                                    className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-50 text-blue-700 font-bold rounded-xl border border-blue-100 hover:bg-blue-100 transition-colors"
-                                 >
-                                     <Download size={18} />
-                                     ডাটা ডাউনলোড (Backup)
-                                 </button>
-                                 
-                                 <button 
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className="flex items-center justify-center gap-2 px-6 py-3 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 transition-colors"
-                                 >
-                                     <Upload size={18} />
-                                     ডাটা আপলোড (Restore)
-                                 </button>
-                                 <input 
-                                    type="file" 
-                                    ref={fileInputRef} 
-                                    className="hidden" 
-                                    accept=".json" 
-                                    onChange={handleRestore}
-                                 />
-                             </div>
                         </div>
                     </div>
                 )}
@@ -621,7 +866,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                 <p className="text-xs text-slate-500">বর্তমান: <span className="font-bold text-slate-800">৳{selectedUser.balance}</span></p>
                             </div>
 
-                            {/* Action Toggle */}
                             <div className="flex bg-slate-100 p-1 rounded-lg mb-4">
                                 <button
                                     type="button"

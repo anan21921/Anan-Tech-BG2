@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Zap, Lock, User as UserIcon, Loader2, AlertCircle, UserPlus, ArrowRight } from 'lucide-react';
 import { login, createUser } from '../services/authService';
@@ -71,7 +72,8 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                  <p className="text-slate-500 text-sm mt-1">পাসপোর্ট ফটো স্টুডিও</p>
             </div>
 
-            <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl shadow-slate-200 border border-slate-100 p-8 animate-fade-in-up">
+            <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl shadow-slate-200 border border-slate-100 p-8 animate-fade-in-up relative overflow-hidden">
+                
                 <h2 className="text-2xl font-bold text-slate-800 mb-2 text-center">
                     {isRegistering ? 'নতুন অ্যাকাউন্ট খুলুন' : 'লগইন করুন'}
                 </h2>

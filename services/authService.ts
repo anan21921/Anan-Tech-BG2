@@ -1,10 +1,12 @@
-import { User, RechargeRequest, RechargeStatus, Transaction, GeneratedImage } from '../types';
+
+import { User, RechargeRequest, RechargeStatus, Transaction, GeneratedImage, SupportMessage } from '../types';
 
 const STORAGE_KEY_USERS = 'anan_app_users';
 const STORAGE_KEY_CURRENT_USER = 'anan_auth_user';
 const STORAGE_KEY_REQUESTS = 'anan_app_recharge_requests';
 const STORAGE_KEY_TRANSACTIONS = 'anan_app_transactions';
 const STORAGE_KEY_IMAGES = 'anan_app_generated_images';
+const STORAGE_KEY_CHATS = 'anan_app_support_chats';
 
 // Helper for unique IDs
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
@@ -84,11 +86,26 @@ const getStoredImages = (): GeneratedImage[] => {
     }
 };
 
+const getStoredChats = (): Record<string, SupportMessage[]> => {
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY_CHATS);
+        if (!stored) return {};
+        const parsed = JSON.parse(stored);
+        // Validate it's an object
+        if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+            return parsed;
+        }
+        return {};
+    } catch (e) {
+        console.error("Error reading chats", e);
+        return {};
+    }
+};
+
 export const login = async (username: string, password: string): Promise<User | null> => {
     await new Promise(resolve => setTimeout(resolve, 800));
 
     const users = getStoredUsers();
-    // Case insensitive username check
     const cleanUsername = username.trim().toLowerCase();
     const cleanPassword = password.trim();
 
@@ -134,8 +151,9 @@ export const getFullDatabaseJSON = (): string => {
         requests: getStoredRequests(),
         transactions: getStoredTransactions(),
         images: getStoredImages(),
+        chats: getStoredChats(),
         timestamp: new Date().toISOString(),
-        version: '1.2'
+        version: '1.5'
     };
     return JSON.stringify(data, null, 2);
 };
@@ -154,6 +172,9 @@ export const restoreDatabaseFromJSON = (jsonString: string): boolean => {
         }
         if (data.images && Array.isArray(data.images)) {
             localStorage.setItem(STORAGE_KEY_IMAGES, JSON.stringify(data.images));
+        }
+        if (data.chats) {
+            localStorage.setItem(STORAGE_KEY_CHATS, JSON.stringify(data.chats));
         }
         return true;
     } catch (e) {
@@ -175,12 +196,10 @@ export const createUser = async (userData: { username: string; password: string;
     
     const cleanUsername = userData.username.trim();
     
-    // Check for duplicate username (case insensitive)
     if (users.find((u: any) => u.username.toLowerCase() === cleanUsername.toLowerCase())) {
         throw new Error('এই ইউজারনেমটি ইতিমধ্যে ব্যবহার করা হয়েছে। অন্য ইউজারনেম দিন।');
     }
 
-    // Set default balance to 10 for new users (Welcome Bonus)
     const initialBalance = userData.balance !== undefined ? userData.balance : 10;
 
     const newUser = {
@@ -195,7 +214,6 @@ export const createUser = async (userData: { username: string; password: string;
     users.push(newUser);
     localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(users));
 
-    // Log the welcome bonus transaction if applicable
     if (initialBalance > 0) {
         logTransaction({
             userId: newUser.id,
@@ -208,7 +226,6 @@ export const createUser = async (userData: { username: string; password: string;
     return true;
 };
 
-// Helper to log transactions
 const logTransaction = (data: { userId: string, amount: number, type: 'credit' | 'debit', description: string }) => {
     const transactions = getStoredTransactions();
     const newTx: Transaction = {
@@ -223,7 +240,6 @@ const logTransaction = (data: { userId: string, amount: number, type: 'credit' |
     try {
         localStorage.setItem(STORAGE_KEY_TRANSACTIONS, JSON.stringify(transactions));
     } catch (e) {
-        // If storage full, remove old
         if (transactions.length > 100) {
             const trimmed = transactions.slice(0, 100);
             localStorage.setItem(STORAGE_KEY_TRANSACTIONS, JSON.stringify(trimmed));
@@ -242,7 +258,6 @@ export const updateBalance = async (userId: string, amount: number, description:
         users[userIndex].balance = newBalance;
         localStorage.setItem(STORAGE_KEY_USERS, JSON.stringify(users));
         
-        // Log transaction
         logTransaction({
             userId: userId,
             amount: amount,
@@ -290,7 +305,6 @@ export const createRechargeRequest = async (data: { userId: string, userName: st
     try {
         localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(requests));
     } catch (e) {
-        // If full, trim old requests
          if (requests.length > 50) {
             localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(requests.slice(0, 50)));
         }
@@ -340,20 +354,16 @@ export const saveGeneratedImage = (data: { userId: string, userName: string, ima
     
     images.unshift(newImage);
 
-    // Storage Management: localStorage limit is usually 5-10MB.
-    // If we exceed quota, remove oldest images.
     try {
         localStorage.setItem(STORAGE_KEY_IMAGES, JSON.stringify(images));
     } catch (e: any) {
         if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
-            // Remove last 5 images and try again
             if (images.length > 5) {
                 const trimmedImages = images.slice(0, images.length - 5);
                 try {
                      localStorage.setItem(STORAGE_KEY_IMAGES, JSON.stringify(trimmedImages));
                      return true;
                 } catch(retryErr) {
-                    // Critical fail
                     return false;
                 }
             }
@@ -370,4 +380,83 @@ export const getAllGeneratedImages = (): GeneratedImage[] => {
 export const getUserGeneratedImages = (userId: string): GeneratedImage[] => {
     const images = getStoredImages();
     return images.filter(img => img.userId === userId);
+};
+
+// --- Chat Support Functions ---
+
+export const getSupportMessages = (userId: string): SupportMessage[] => {
+    const allChats = getStoredChats();
+    return allChats[userId] || [];
+};
+
+export const sendSupportMessage = (
+    userId: string, 
+    senderName: string, 
+    text: string, 
+    isAdmin: boolean,
+    attachmentType?: 'image' | 'audio',
+    attachmentData?: string
+): SupportMessage => {
+    const allChats = getStoredChats();
+    // Ensure array exists
+    if (!allChats[userId]) {
+        allChats[userId] = [];
+    }
+    
+    const userChats = allChats[userId];
+    
+    const newMessage: SupportMessage = {
+        id: generateId(),
+        senderId: isAdmin ? 'admin' : userId,
+        senderName: senderName,
+        text: text,
+        timestamp: new Date().toISOString(),
+        isAdmin: isAdmin,
+        attachmentType,
+        attachmentData,
+        status: 'sent'
+    };
+    
+    userChats.push(newMessage);
+    allChats[userId] = userChats; // Re-assign to ensure object reference holds (though passed by ref usually)
+    
+    try {
+        localStorage.setItem(STORAGE_KEY_CHATS, JSON.stringify(allChats));
+    } catch (e) {
+        console.error("Storage full for chats", e);
+        if (userChats.length > 40) {
+            allChats[userId] = userChats.slice(-40);
+            localStorage.setItem(STORAGE_KEY_CHATS, JSON.stringify(allChats));
+        }
+    }
+    return newMessage;
+};
+
+export const getAllChats = (): Record<string, SupportMessage[]> => {
+    return getStoredChats();
+};
+
+export const markMessagesAsSeen = (userId: string, seenByAdmin: boolean): void => {
+    const allChats = getStoredChats();
+    const userChats = allChats[userId];
+    if (!userChats) return;
+
+    let updated = false;
+    userChats.forEach(msg => {
+        // If seen by admin, mark user messages as seen
+        if (seenByAdmin && !msg.isAdmin && msg.status !== 'seen') {
+            msg.status = 'seen';
+            updated = true;
+        }
+        // If seen by user, mark admin messages as seen
+        if (!seenByAdmin && msg.isAdmin && msg.status !== 'seen') {
+             msg.status = 'seen';
+             updated = true;
+        }
+    });
+
+    if (updated) {
+        allChats[userId] = userChats;
+        localStorage.setItem(STORAGE_KEY_CHATS, JSON.stringify(allChats));
+    }
 };

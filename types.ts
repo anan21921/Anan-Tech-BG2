@@ -113,3 +113,17 @@ export interface ChatMessage {
     role: 'user' | 'model';
     text: string;
 }
+
+export type MessageStatus = 'sent' | 'delivered' | 'seen';
+
+export interface SupportMessage {
+    id: string;
+    senderId: string; // 'user_id' or 'admin'
+    senderName: string;
+    text: string; // Text content or description of media
+    timestamp: string;
+    isAdmin: boolean;
+    attachmentType?: 'image' | 'audio'; 
+    attachmentData?: string; // Base64 string for image or audio
+    status: MessageStatus; 
+}

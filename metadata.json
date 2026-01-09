@@ -2,6 +2,7 @@
   "name": "Anan Tech Studio .ai",
   "description": "Professional Bangladeshi Passport Photo Maker with AI editing capabilities by Anan Tech Studio .ai.",
   "requestFramePermissions": [
-    "camera"
+    "camera",
+    "microphone"
   ]
 }

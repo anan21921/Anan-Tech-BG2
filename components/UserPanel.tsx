@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera, Upload, Download, RefreshCw, Image as ImageIcon, ScanFace, FileImage, ZoomIn, RotateCcw, Wand2, Zap, CheckCircle2, Maximize2, LogOut, Wallet, PlusCircle, X, History, Clock, AlertTriangle, ArrowUpRight, ArrowDownLeft, LayoutGrid, Calendar } from 'lucide-react';
 import { Controls } from './Controls';
@@ -678,6 +679,33 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
                             </div>
                         )}
 
+                        {/* NEW: Pre-Generation State (Uploaded but not generated) */}
+                        {originalImage && !generatedImage && !status.isProcessing && !status.error && (
+                            <div className="relative z-10 flex flex-col items-center justify-center w-full animate-fade-in-up">
+                                <div className="bg-white p-3 shadow-xl shadow-slate-200/50 rounded-xl border border-slate-100 max-w-[280px]">
+                                    <div className="aspect-[3/4] bg-slate-100 rounded-lg overflow-hidden relative">
+                                         <img 
+                                            src={originalImage} 
+                                            alt="Original Preview" 
+                                            className="w-full h-full object-cover opacity-80 grayscale-[30%]"
+                                        />
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black/10">
+                                            <span className="bg-white/90 backdrop-blur text-slate-600 px-3 py-1 rounded-full text-[10px] font-bold shadow-sm border border-white/50">
+                                                অরিজিনাল প্রিভিউ
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="mt-6 text-center max-w-xs">
+                                    <h4 className="font-bold text-slate-700 mb-1">ছবি এডিটিং-এর জন্য প্রস্তুত</h4>
+                                    <p className="text-xs text-slate-500 leading-relaxed bg-white px-4 py-2 rounded-lg border border-slate-100 shadow-sm inline-block">
+                                        ডানদিকের মেনু থেকে আপনার পছন্দের <strong>সাইজ</strong>, <strong>ড্রেস</strong> ও <strong>ব্যাকগ্রাউন্ড</strong> সিলেক্ট করে <br/>
+                                        <span className="text-blue-600 font-bold">"ছবি তৈরি করুন"</span> বাটনে ক্লিক করুন।
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
                         {/* Loading State */}
                         {status.isProcessing && (
                             <div className="absolute inset-0 z-30 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center">
@@ -1020,7 +1048,8 @@ export const UserPanel: React.FC<UserPanelProps> = ({ user, onLogout, onRefreshU
                  </div>
              </div>
         )}
-
+      
+        {/* Chat Widget for Users */}
         <ChatSupport />
       </main>
     </div>
