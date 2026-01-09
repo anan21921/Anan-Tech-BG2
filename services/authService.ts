@@ -91,7 +91,10 @@ const getStoredChats = (): Record<string, SupportMessage[]> => {
         const stored = localStorage.getItem(STORAGE_KEY_CHATS);
         if (!stored) return {};
         const parsed = JSON.parse(stored);
-        // Validate it's an object
+        
+        // Relaxed validation: Check if it's an object and not null. 
+        // Even if it was an array before, we can't easily recover without migration logic, 
+        // so we return empty object if it's an array to reset safely.
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
             return parsed;
         }
@@ -153,7 +156,7 @@ export const getFullDatabaseJSON = (): string => {
         images: getStoredImages(),
         chats: getStoredChats(),
         timestamp: new Date().toISOString(),
-        version: '1.5'
+        version: '1.6'
     };
     return JSON.stringify(data, null, 2);
 };
@@ -397,13 +400,16 @@ export const sendSupportMessage = (
     attachmentType?: 'image' | 'audio',
     attachmentData?: string
 ): SupportMessage => {
-    const allChats = getStoredChats();
-    // Ensure array exists
+    // 1. Get current chats
+    // Using Spread to create shallow copy to ensure we aren't mutating readonly ref if any
+    const allChats = { ...getStoredChats() }; 
+    
+    // 2. Ensure array exists for this user
     if (!allChats[userId]) {
         allChats[userId] = [];
     }
     
-    const userChats = allChats[userId];
+    const userChats = [...allChats[userId]]; // Create copy of array
     
     const newMessage: SupportMessage = {
         id: generateId(),
@@ -417,11 +423,20 @@ export const sendSupportMessage = (
         status: 'sent'
     };
     
+    // 3. Update data
     userChats.push(newMessage);
-    allChats[userId] = userChats; // Re-assign to ensure object reference holds (though passed by ref usually)
+    allChats[userId] = userChats;
     
+    // 4. Save to storage
     try {
-        localStorage.setItem(STORAGE_KEY_CHATS, JSON.stringify(allChats));
+        const json = JSON.stringify(allChats);
+        localStorage.setItem(STORAGE_KEY_CHATS, json);
+        
+        // 5. Dispatch Event for Cross-Tab/Window Sync
+        window.dispatchEvent(new Event('storage'));
+        // Also custom event for same-window updates if needed
+        window.dispatchEvent(new CustomEvent('anan-chat-update'));
+        
     } catch (e) {
         console.error("Storage full for chats", e);
         if (userChats.length > 40) {
@@ -437,8 +452,8 @@ export const getAllChats = (): Record<string, SupportMessage[]> => {
 };
 
 export const markMessagesAsSeen = (userId: string, seenByAdmin: boolean): void => {
-    const allChats = getStoredChats();
-    const userChats = allChats[userId];
+    const allChats = { ...getStoredChats() };
+    const userChats = allChats[userId] ? [...allChats[userId]] : null;
     if (!userChats) return;
 
     let updated = false;
@@ -458,5 +473,7 @@ export const markMessagesAsSeen = (userId: string, seenByAdmin: boolean): void =
     if (updated) {
         allChats[userId] = userChats;
         localStorage.setItem(STORAGE_KEY_CHATS, JSON.stringify(allChats));
+        window.dispatchEvent(new Event('storage'));
+        window.dispatchEvent(new CustomEvent('anan-chat-update'));
     }
 };

@@ -33,7 +33,7 @@ export const ChatSupport: React.FC = () => {
         loadMessages();
         const interval = setInterval(loadMessages, 1500); // Fast polling for "Real-time" feel
         return () => clearInterval(interval);
-    }, [user, isOpen]);
+    }, [user?.id, isOpen]); // Using user.id dependency to be safe
 
     useEffect(() => {
         if (scrollRef.current) {
@@ -42,12 +42,15 @@ export const ChatSupport: React.FC = () => {
     }, [messages, isOpen]);
 
     const handleSend = async (attachmentType?: 'image' | 'audio', attachmentData?: string, customText?: string) => {
-        if ((!input.trim() && !attachmentData) || !user) return;
+        // Ensure user is fresh
+        const currentUser = getCurrentUser();
+        if ((!input.trim() && !attachmentData) || !currentUser) return;
         
         const text = customText || input;
         if (!attachmentData) setInput('');
         
-        const newMsg = sendSupportMessage(user.id, user.name, text, false, attachmentType, attachmentData);
+        // This function now dispatches storage events
+        const newMsg = sendSupportMessage(currentUser.id, currentUser.name, text, false, attachmentType, attachmentData);
         setMessages(prev => [...prev, newMsg]);
     };
 

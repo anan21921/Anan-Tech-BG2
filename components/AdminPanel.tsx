@@ -73,9 +73,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
         const requests = getRechargeRequests();
         setRequestList(requests);
         
-        // Always fetch fresh chats
+        // Always fetch fresh chats and CREATE NEW REFERENCE to force React update
         const allChats = getAllChats();
-        setChats(allChats); 
+        setChats({...allChats}); 
         
         setGalleryImages(getAllGeneratedImages());
 
@@ -122,11 +122,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
 
     }, [selectedChatUser]);
 
-    // Auto refresh every 2 seconds
+    // Auto refresh every 2 seconds + Event Listeners
     useEffect(() => {
         refreshData(); // Initial load
         const interval = setInterval(refreshData, 2000);
-        return () => clearInterval(interval);
+        
+        // Listen for storage events (Cross-tab) and custom events (Same-tab)
+        const handleStorageChange = () => refreshData();
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('anan-chat-update', handleStorageChange);
+
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('anan-chat-update', handleStorageChange);
+        };
     }, [refreshData]);
 
     // Scroll chat to bottom
@@ -159,6 +169,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
         setBalanceAmount('');
         setBalanceActionType('add');
         setShowBalanceModal(true);
+    };
+
+    // --- Start Chat Logic ---
+    const handleStartChat = (targetUserId: string) => {
+        setSelectedChatUser(targetUserId);
+        setActiveTab('chat');
     };
 
     const handleUpdateBalance = async (e: React.FormEvent) => {
@@ -271,6 +287,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
         if (status === 'delivered') return <CheckCheck size={14} className="text-slate-400" />;
         return <Check size={14} className="text-slate-400" />;
     };
+
+    // Helper to get selected chat user details even if no chat history exists yet
+    const getSelectedChatUserDetails = () => {
+        if (!selectedChatUser) return null;
+        
+        // 1. Try to find in chat history
+        const chatHistory = chats[selectedChatUser];
+        if (chatHistory && chatHistory.length > 0) {
+             const userMsg = chatHistory.find(m => !m.isAdmin);
+             if (userMsg) return { name: userMsg.senderName, avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(userMsg.senderName)}&background=random` };
+        }
+
+        // 2. Try to find in User List (Fallback for new chats)
+        const userInList = usersList.find(u => u.id === selectedChatUser);
+        if (userInList) {
+            return { name: userInList.name, avatar: userInList.avatar || '' };
+        }
+
+        return { name: 'User', avatar: 'https://ui-avatars.com/api/?name=User&background=random' };
+    };
+
+    const activeChatDetails = getSelectedChatUserDetails();
 
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -425,12 +463,23 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                                 </td>
                                                 <td className="px-6 py-4 font-bold text-slate-800">৳ {u.balance}</td>
                                                 <td className="px-6 py-4 text-right">
-                                                    <button 
-                                                        onClick={() => openBalanceModal(u)}
-                                                        className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors border border-slate-200"
-                                                    >
-                                                        <Coins size={14} /> ব্যালেন্স
-                                                    </button>
+                                                    <div className="flex justify-end gap-2">
+                                                        {u.role !== 'admin' && (
+                                                            <button
+                                                                onClick={() => handleStartChat(u.id)}
+                                                                className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-green-600 bg-slate-100 hover:bg-green-50 px-3 py-1.5 rounded-lg transition-colors border border-slate-200"
+                                                                title="মেসেজ পাঠান"
+                                                            >
+                                                                <MessageSquare size={14} /> মেসেজ
+                                                            </button>
+                                                        )}
+                                                        <button 
+                                                            onClick={() => openBalanceModal(u)}
+                                                            className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors border border-slate-200"
+                                                        >
+                                                            <Coins size={14} /> ব্যালেন্স
+                                                        </button>
+                                                    </div>
                                                 </td>
                                             </tr>
                                         ))}
@@ -614,11 +663,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
                                     <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between shadow-sm z-10">
                                         <div className="flex items-center gap-3">
                                             <div className="w-10 h-10 rounded-full bg-slate-300 overflow-hidden">
-                                                 <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(chats[selectedChatUser]?.find(m => m.senderName)?.senderName || 'User')}&background=random`} alt="" className="w-full h-full"/>
+                                                 <img src={activeChatDetails?.avatar} alt="" className="w-full h-full"/>
                                             </div>
                                             <div>
                                                 <h3 className="font-bold text-slate-800 text-sm">
-                                                    {chats[selectedChatUser]?.find(m => m.senderName)?.senderName || 'Chat'}
+                                                    {activeChatDetails?.name}
                                                 </h3>
                                                 <p className="text-xs text-slate-500">
                                                     Online
@@ -633,7 +682,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ user, onLogout }) => {
 
                                     {/* Messages */}
                                     <div ref={chatScrollRef} className="flex-grow overflow-y-auto p-6 space-y-4 custom-scrollbar" style={{ backgroundImage: 'url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png")', backgroundBlendMode: 'soft-light' }}>
-                                        {chats[selectedChatUser]?.map((msg) => (
+                                        {/* Fallback to empty array if no chat exists yet */}
+                                        {(chats[selectedChatUser] || []).length === 0 && (
+                                            <div className="flex justify-center mt-10">
+                                                <div className="bg-white/80 backdrop-blur rounded-lg px-4 py-2 text-xs text-slate-500 shadow-sm">
+                                                    Start a conversation with {activeChatDetails?.name}
+                                                </div>
+                                            </div>
+                                        )}
+                                        
+                                        {(chats[selectedChatUser] || []).map((msg) => (
                                             <div key={msg.id} className={`flex ${msg.isAdmin ? 'justify-end' : 'justify-start'}`}>
                                                 <div className={`relative max-w-[65%] p-2.5 rounded-lg text-sm shadow-sm ${
                                                     msg.isAdmin 

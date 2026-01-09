@@ -8,7 +8,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, (process as any).cwd(), '');
   return {
     plugins: [react()],
-    base: './', // Ensures relative paths are used for assets/scripts to fix loading errors
+    base: '/', // Changed from './' to '/' to ensure assets load correctly on Netlify
     define: {
       // This enables process.env.API_KEY to work in the browser
       'process.env.API_KEY': JSON.stringify(env.API_KEY)
