@@ -3,7 +3,11 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { PhotoSettings, DressType, ChatMessage } from "../types";
 
 // Initialize Gemini AI Client using the key injected by Vite
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+
+if (!apiKey) {
+  console.error("API Key missing");
+}
 
 // Helper to convert blob to base64 Data URL (includes prefix)
 export const blobToBase64 = (blob: Blob): Promise<string> => {
