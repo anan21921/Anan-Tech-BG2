@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Login } from './components/Login';
 import { UserPanel } from './components/UserPanel';
@@ -12,13 +13,36 @@ const App: React.FC = () => {
     const refreshUser = () => {
         const updatedUser = getCurrentUser();
         if (updatedUser) {
-            setUser(updatedUser);
+            // Only update state if data actually changed to prevent re-renders
+            setUser(prev => {
+                if (JSON.stringify(prev) !== JSON.stringify(updatedUser)) {
+                    return updatedUser;
+                }
+                return prev;
+            });
+        } else {
+            // If session became invalid (e.g. user deleted), logout
+             if (user) setUser(null);
         }
     };
 
     useEffect(() => {
         refreshUser();
         setCheckingAuth(false);
+
+        // Poll for updates (e.g. balance changes approved by admin in another tab)
+        const interval = setInterval(refreshUser, 2000);
+
+        // Listen for storage events (cross-tab updates)
+        const handleStorageChange = () => refreshUser();
+        window.addEventListener('storage', handleStorageChange);
+        window.addEventListener('anan-app-update', handleStorageChange);
+
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('anan-app-update', handleStorageChange);
+        };
     }, []);
 
     const handleLogin = (loggedInUser: User) => {

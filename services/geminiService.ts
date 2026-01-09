@@ -1,17 +1,9 @@
-import { GoogleGenAI } from "@google/genai";
+
+import { GoogleGenAI, Type } from "@google/genai";
 import { PhotoSettings, DressType, ChatMessage } from "../types";
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-
-if (!apiKey) {
-  console.error("API Key missing");
-}
-
-// উদাহরণ: Gemini call
-// const response = await fetch('https://api.generativeai.google.com/v1/...', {
-//   headers: { 'Authorization': `Bearer ${apiKey}` }
-// });
-
+// Initialize Gemini AI Client using the key injected by Vite
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Helper to convert blob to base64 Data URL (includes prefix)
 export const blobToBase64 = (blob: Blob): Promise<string> => {
@@ -33,7 +25,8 @@ export interface FaceAnalysisResult {
 // Analyze image to get face bounding box and tilt angle
 export const getFaceAnalysis = async (imageInput: string): Promise<FaceAnalysisResult> => {
     try {
-        const model = 'gemini-2.5-flash';
+        // Use gemini-3-flash-preview for text-based analysis tasks
+        const model = 'gemini-3-flash-preview';
         
         let mimeType = 'image/jpeg';
         let imageBase64 = imageInput;
@@ -62,7 +55,23 @@ export const getFaceAnalysis = async (imageInput: string): Promise<FaceAnalysisR
                 ]
             },
             config: {
-                responseMimeType: "application/json"
+                responseMimeType: "application/json",
+                // Use responseSchema to ensure structured and reliable JSON output
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        rollAngle: {
+                            type: Type.NUMBER,
+                            description: 'The estimated head tilt roll angle in degrees.'
+                        },
+                        faceBox: {
+                            type: Type.ARRAY,
+                            items: { type: Type.NUMBER },
+                            description: 'Face bounding box coordinates [ymin, xmin, ymax, xmax] on a 0-1000 scale.'
+                        }
+                    },
+                    required: ['rollAngle', 'faceBox']
+                }
             }
         });
 
@@ -172,7 +181,8 @@ export const generatePassportPhoto = async (
 // --- CHAT SUPPORT ---
 export const getChatResponse = async (history: ChatMessage[], newMessage: string): Promise<string> => {
     const chat = ai.chats.create({
-        model: 'gemini-2.5-flash',
+        // Use gemini-3-flash-preview for chat support tasks
+        model: 'gemini-3-flash-preview',
         config: {
             systemInstruction: `
                 You are a helpful and polite support assistant for 'Anan Tech Studio .ai', a passport photo making application.

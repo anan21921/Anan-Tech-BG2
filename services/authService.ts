@@ -11,6 +11,12 @@ const STORAGE_KEY_CHATS = 'anan_app_support_chats';
 // Helper for unique IDs
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 
+// Dispatch helper
+const notifyUpdate = () => {
+    window.dispatchEvent(new Event('storage'));
+    window.dispatchEvent(new CustomEvent('anan-app-update'));
+};
+
 // Initial Mock Users (only used if storage is empty)
 const DEFAULT_USERS: any[] = [
     {
@@ -91,10 +97,6 @@ const getStoredChats = (): Record<string, SupportMessage[]> => {
         const stored = localStorage.getItem(STORAGE_KEY_CHATS);
         if (!stored) return {};
         const parsed = JSON.parse(stored);
-        
-        // Relaxed validation: Check if it's an object and not null. 
-        // Even if it was an array before, we can't easily recover without migration logic, 
-        // so we return empty object if it's an array to reset safely.
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
             return parsed;
         }
@@ -117,6 +119,7 @@ export const login = async (username: string, password: string): Promise<User | 
     if (user) {
         const { password, ...safeUser } = user;
         localStorage.setItem(STORAGE_KEY_CURRENT_USER, JSON.stringify(safeUser));
+        notifyUpdate();
         return safeUser;
     }
 
@@ -125,6 +128,7 @@ export const login = async (username: string, password: string): Promise<User | 
 
 export const logout = () => {
     localStorage.removeItem(STORAGE_KEY_CURRENT_USER);
+    notifyUpdate();
 };
 
 export const getCurrentUser = (): User | null => {
@@ -179,6 +183,7 @@ export const restoreDatabaseFromJSON = (jsonString: string): boolean => {
         if (data.chats) {
             localStorage.setItem(STORAGE_KEY_CHATS, JSON.stringify(data.chats));
         }
+        notifyUpdate();
         return true;
     } catch (e) {
         console.error("Failed to restore database", e);
@@ -225,7 +230,7 @@ export const createUser = async (userData: { username: string; password: string;
             description: 'Welcome Bonus'
         });
     }
-
+    notifyUpdate();
     return true;
 };
 
@@ -272,8 +277,9 @@ export const updateBalance = async (userId: string, amount: number, description:
         if (currentUser && currentUser.id === userId) {
             const { password, ...safeUser } = users[userIndex];
             localStorage.setItem(STORAGE_KEY_CURRENT_USER, JSON.stringify(safeUser));
-            return safeUser;
         }
+        
+        notifyUpdate();
         
         const { password, ...safeUser } = users[userIndex];
         return safeUser;
@@ -312,6 +318,7 @@ export const createRechargeRequest = async (data: { userId: string, userName: st
             localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(requests.slice(0, 50)));
         }
     }
+    notifyUpdate();
     return true;
 };
 
@@ -337,6 +344,7 @@ export const handleRechargeRequest = async (requestId: string, status: 'approved
         }
         requests[index].status = status;
         localStorage.setItem(STORAGE_KEY_REQUESTS, JSON.stringify(requests));
+        notifyUpdate();
         return true;
     }
     return false;
@@ -359,12 +367,14 @@ export const saveGeneratedImage = (data: { userId: string, userName: string, ima
 
     try {
         localStorage.setItem(STORAGE_KEY_IMAGES, JSON.stringify(images));
+        notifyUpdate();
     } catch (e: any) {
         if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED') {
             if (images.length > 5) {
                 const trimmedImages = images.slice(0, images.length - 5);
                 try {
                      localStorage.setItem(STORAGE_KEY_IMAGES, JSON.stringify(trimmedImages));
+                     notifyUpdate();
                      return true;
                 } catch(retryErr) {
                     return false;
@@ -400,16 +410,13 @@ export const sendSupportMessage = (
     attachmentType?: 'image' | 'audio',
     attachmentData?: string
 ): SupportMessage => {
-    // 1. Get current chats
-    // Using Spread to create shallow copy to ensure we aren't mutating readonly ref if any
     const allChats = { ...getStoredChats() }; 
     
-    // 2. Ensure array exists for this user
     if (!allChats[userId]) {
         allChats[userId] = [];
     }
     
-    const userChats = [...allChats[userId]]; // Create copy of array
+    const userChats = [...allChats[userId]]; 
     
     const newMessage: SupportMessage = {
         id: generateId(),
@@ -423,18 +430,14 @@ export const sendSupportMessage = (
         status: 'sent'
     };
     
-    // 3. Update data
     userChats.push(newMessage);
     allChats[userId] = userChats;
     
-    // 4. Save to storage
     try {
         const json = JSON.stringify(allChats);
         localStorage.setItem(STORAGE_KEY_CHATS, json);
         
-        // 5. Dispatch Event for Cross-Tab/Window Sync
         window.dispatchEvent(new Event('storage'));
-        // Also custom event for same-window updates if needed
         window.dispatchEvent(new CustomEvent('anan-chat-update'));
         
     } catch (e) {
@@ -458,12 +461,10 @@ export const markMessagesAsSeen = (userId: string, seenByAdmin: boolean): void =
 
     let updated = false;
     userChats.forEach(msg => {
-        // If seen by admin, mark user messages as seen
         if (seenByAdmin && !msg.isAdmin && msg.status !== 'seen') {
             msg.status = 'seen';
             updated = true;
         }
-        // If seen by user, mark admin messages as seen
         if (!seenByAdmin && msg.isAdmin && msg.status !== 'seen') {
              msg.status = 'seen';
              updated = true;

@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Zap, Lock, User as UserIcon, Loader2, AlertCircle, UserPlus, ArrowRight } from 'lucide-react';
 import { login, createUser } from '../services/authService';
@@ -40,12 +39,12 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     username,
                     password,
                     role: 'user',
-                    balance: 0 // Explicitly 0
+                    balance: 0 
                 });
 
                 setSuccessMsg('অ্যাকাউন্ট তৈরি সফল হয়েছে! এখন লগইন করুন।');
-                setIsRegistering(false); // Switch back to login
-                setPassword(''); // Clear password
+                setIsRegistering(false); 
+                setPassword(''); 
             } else {
                 // Handle Login
                 const user = await login(username, password);
@@ -73,7 +72,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
 
             <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl shadow-slate-200 border border-slate-100 p-8 animate-fade-in-up relative overflow-hidden">
-                
                 <h2 className="text-2xl font-bold text-slate-800 mb-2 text-center">
                     {isRegistering ? 'নতুন অ্যাকাউন্ট খুলুন' : 'লগইন করুন'}
                 </h2>
@@ -96,7 +94,6 @@ export const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 )}
 
                 <form onSubmit={handleSubmit} className="space-y-4">
-                    
                     {isRegistering && (
                          <div>
                             <label className="block text-xs font-bold text-slate-700 mb-1.5">আপনার নাম</label>
