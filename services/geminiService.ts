@@ -2,12 +2,8 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { PhotoSettings, DressType, ChatMessage } from "../types";
 
-// Initialize Gemini AI Client using the key injected by Vite
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-
-if (!apiKey) {
-  console.error("API Key missing");
-}
+// Initialize Gemini AI Client using the key injected by Vite via define
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Helper to convert blob to base64 Data URL (includes prefix)
 export const blobToBase64 = (blob: Blob): Promise<string> => {
@@ -29,7 +25,6 @@ export interface FaceAnalysisResult {
 // Analyze image to get face bounding box and tilt angle
 export const getFaceAnalysis = async (imageInput: string): Promise<FaceAnalysisResult> => {
     try {
-        // Use gemini-3-flash-preview for text-based analysis tasks
         const model = 'gemini-3-flash-preview';
         
         let mimeType = 'image/jpeg';
@@ -60,7 +55,6 @@ export const getFaceAnalysis = async (imageInput: string): Promise<FaceAnalysisR
             },
             config: {
                 responseMimeType: "application/json",
-                // Use responseSchema to ensure structured and reliable JSON output
                 responseSchema: {
                     type: Type.OBJECT,
                     properties: {
@@ -103,7 +97,6 @@ export const generatePassportPhoto = async (
   imageInput: string,
   settings: PhotoSettings
 ): Promise<string> => {
-    // Determine mime type and base64 data
     let mimeType = 'image/jpeg';
     let imageBase64 = imageInput;
     if (imageInput.startsWith('data:')) {
@@ -121,14 +114,12 @@ export const generatePassportPhoto = async (
         dressPrompt = `Change clothing to: ${dressDesc}. Ensure the clothing fits naturally and looks professional.`;
     }
 
-    // New logic for face brightening with intensity
     let faceBrighteningPrompt = "";
     if (settings.brightenFace || settings.brightenFaceIntensity > 0) {
         const intensity = settings.brightenFaceIntensity;
         faceBrighteningPrompt = `Slightly brighten the face (${intensity}% intensity) to improve visibility, but keep it natural.`;
     }
 
-    // Refined prompt to prevent text generation on image
     const prompt = `
         Transform this image into a professional passport photo.
         
@@ -161,7 +152,6 @@ export const generatePassportPhoto = async (
         }
     });
 
-    // Check parts for the image
     const parts = response.candidates?.[0]?.content?.parts;
     if (parts) {
         for (const part of parts) {
@@ -171,7 +161,6 @@ export const generatePassportPhoto = async (
         }
     }
     
-    // If we get here, no image was generated.
     if (response.text) {
         console.warn("Gemini Refusal:", response.text);
         let errorMsg = response.text;
@@ -182,27 +171,23 @@ export const generatePassportPhoto = async (
     throw new Error("No image generated. Please try a different photo or setting.");
 };
 
-// --- CHAT SUPPORT ---
 export const getChatResponse = async (history: ChatMessage[], newMessage: string): Promise<string> => {
     const chat = ai.chats.create({
-        // Use gemini-3-flash-preview for chat support tasks
         model: 'gemini-3-flash-preview',
         config: {
             systemInstruction: `
                 You are a helpful and polite support assistant for 'Anan Tech Studio .ai', a passport photo making application.
                 
                 KEY INFORMATION:
-                1. Service: We create professional passport photos using AI (change background, dress, face smoothing).
+                1. Service: We create professional passport photos using AI.
                 2. Pricing: Each photo generation costs 3 BDT.
                 3. Payment/Recharge: Users must send money via 'Send Money' to 01540-013418 (bKash Personal). Minimum recharge is 50 BDT.
-                4. Issues: If balance is not added, users should provide their TrxID and Sender Number to the admin.
+                4. Issues: If balance is not added, users should provide their TrxID and Sender Number.
                 5. New Account Bonus: New users get 10 BDT free balance.
                 
                 RULES:
-                - Answer in Bengali (Bangla) primarily, or English if asked.
-                - Keep answers concise and helpful.
-                - Do not hallucinate features we don't have.
-                - Be friendly.
+                - Answer in Bengali (Bangla) primarily.
+                - Keep answers concise.
             `
         },
         history: history.map(h => ({
